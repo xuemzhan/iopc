@@ -335,7 +335,7 @@ async def _stream_ask(question: str, save: bool, history: list[dict[str, Any]],
                    "sensitive": prepared.get("sensitive", False)})
         buf: list[str] = []
         if masked:
-            yield sse({"type": "delta", "text": "（敏感来源，脱敏生成中…）"})
+            yield sse({"type": "status", "text": "敏感来源：脱敏生成中…"})
         try:
             async for delta in iterate_in_threadpool(llm().stream(prepared["messages"], max_tokens=1800)):
                 buf.append(delta)
