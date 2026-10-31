@@ -13,7 +13,7 @@ from . import policy
 from .config import cfg
 from .db import Database, db
 from .llm import llm
-from .util import chunk_text, normalize_key, now_iso, to_json
+from .util import atomic_write, chunk_text, normalize_key, now_iso, to_json
 from .vault import Vault, bulletize, wikilink
 
 ENTITY_TYPES = {"person", "org", "system", "tool", "project", "place", "event", "other"}
@@ -220,7 +220,7 @@ def resolve_and_link(database: Database, source_id: int, data: dict[str, Any],
             continue
         slug = vault.unique_slug("entity", e["name"])
         # 已存在同名页时复用其路径，不新建
-        existing = _existing_page(vault, "entity", key)
+        existing = _existing_page(vault, "entity", key, database)
         if existing:
             slug = existing.stem
         ent_id = database.upsert_entity(
@@ -234,7 +234,7 @@ def resolve_and_link(database: Database, source_id: int, data: dict[str, Any],
         key = normalize_key(c["name"])
         if not key:
             continue
-        existing = _existing_page(vault, "concept", key)
+        existing = _existing_page(vault, "concept", key, database)
         slug = existing.stem if existing else vault.unique_slug("concept", c["name"])
         cid = database.upsert_concept(
             key, c["name"], c["definition"], aliases=c["aliases"],
@@ -272,8 +272,16 @@ def resolve_and_link(database: Database, source_id: int, data: dict[str, Any],
     return {"entities": ents, "concepts": cons, "source_link": src_link}
 
 
-def _existing_page(vault: Vault, kind: str, key: str):
-    """按文件名 / frontmatter title / aliases 精确匹配同义页（绝不做正文模糊匹配）。"""
+def _existing_page(vault: Vault, kind: str, key: str, database: Database | None = None):
+    """先查库里的 page_path，命中就免掉逐文件扫描；未命中再回退到磁盘。"""
+    if database is not None:
+        table = "entities" if kind == "entity" else "concepts"
+        with database.connect() as c:
+            row = c.execute(f"SELECT page_path FROM {table} WHERE key=?", (key,)).fetchone()
+        if row and row["page_path"]:
+            p = vault.safe_path(row["page_path"])
+            if p is not None and p.exists():
+                return p
     folder = {"entity": "entities", "concept": "concepts"}[kind]
     for p in (vault.wiki / folder).glob("*.md"):
         if normalize_key(p.stem) == key:
@@ -600,7 +608,7 @@ def save_synthetic(question: str, answer: str, cites: list[dict[str, Any]],
     fm = _frontmatter(title=title, type_="synthetic", tags=["qa"], sources=[c["path"] for c in cites if c.get("path")])
     path = vault.wiki / "synthetic" / f"{slug}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"{fm}\n# {title}\n\n{body}", encoding="utf-8", newline="\n")
+    atomic_write(path, f"{fm}\n# {title}\n\n{body}")
     vault.log([f"qa `{title}` → `{vault.rel(path)}`"])
     note_id = database.put_note(
         source_id=None, kind="synthetic", title=title, slug=slug, path=vault.rel(path),

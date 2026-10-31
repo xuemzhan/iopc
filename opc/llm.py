@@ -26,6 +26,10 @@ class LLMError(RuntimeError):
     pass
 
 
+class _StreamUnsupported(Exception):
+    """provider 不支持 stream_options，需要退回普通流式。"""
+
+
 class LLM:
     def __init__(
         self,
@@ -182,22 +186,7 @@ class LLM:
                 time.sleep(2 + attempt * 3)
         raise LLMError(f"LLM 调用失败（重试 {retries} 次）：{last_err}")
 
-    def stream(
-        self,
-        messages: list[dict[str, str]],
-        *,
-        max_tokens: int = 2048,
-        temperature: float | None = None,
-    ):
-        """逐 token 产出增量文本（SSE）。"""
-        self._budget_guard()
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": self.temperature if temperature is None else temperature,
-            "max_tokens": max_tokens,
-            "stream": True,
-        }
+    def _stream_payload(self, payload: dict[str, Any]):
         with httpx.Client(timeout=self.timeout) as client:
             with client.stream(
                 "POST",
@@ -209,7 +198,11 @@ class LLM:
                 json=payload,
             ) as r:
                 if r.status_code >= 400:
-                    raise LLMError(f"LLM HTTP {r.status_code}: {r.read()[:400]!r}")
+                    body = r.read().decode("utf-8", "ignore")
+                    if r.status_code == 400 and "stream_options" in body:
+                        raise _StreamUnsupported()
+                    raise LLMError(f"LLM HTTP {r.status_code}: {body[:400]}")
+                usage: dict[str, Any] | None = None
                 for line in r.iter_lines():
                     if not line or not line.startswith("data:"):
                         continue
@@ -218,11 +211,43 @@ class LLM:
                         break
                     try:
                         obj = json.loads(data)
-                        delta = obj["choices"][0].get("delta", {}).get("content")
                     except Exception:
                         continue
+                    if obj.get("usage"):
+                        usage = obj["usage"]
+                    try:
+                        delta = obj["choices"][0].get("delta", {}).get("content")
+                    except Exception:
+                        delta = None
                     if delta:
                         yield delta
+                if usage:
+                    self.last_usage = usage
+                    self._record()
+
+    def stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        max_tokens: int = 2048,
+        temperature: float | None = None,
+    ):
+        """逐 token 产出增量文本（SSE）；支持 usage 的 provider 会记账。"""
+        self._budget_guard()
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature if temperature is None else temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        if cfg().get("llm.stream_usage", True):
+            payload["stream_options"] = {"include_usage": True}
+        try:
+            yield from self._stream_payload(payload)
+        except _StreamUnsupported:
+            payload.pop("stream_options", None)
+            yield from self._stream_payload(payload)
 
     def chat_json(
         self,

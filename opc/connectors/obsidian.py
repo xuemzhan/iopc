@@ -64,7 +64,7 @@ class ObsidianConnector(Connector):
         out = []
         for p in self.raw_candidates(limit):
             text = read_text_any(p)
-            if not text.strip():
+            if not text.strip() or text.startswith(("[读取失败", "[PDF 读取失败")):
                 continue
             st = p.stat()
             out.append(

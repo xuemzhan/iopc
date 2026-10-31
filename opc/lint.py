@@ -153,7 +153,8 @@ def contradictions(vault: Vault, database: Database, max_checks: int = 6) -> lis
         with database.connect() as c:
             peers = c.execute(
                 "SELECT DISTINCT n2.path, n2.title FROM edges e1"
-                " JOIN edges e2 ON e1.dst_id=e2.dst_id AND e1.dst_type='entity' AND e2.dst_type='entity'"
+                " JOIN edges e2 ON e1.dst_id=e2.dst_id AND e1.dst_type='entity'"
+                " AND e2.dst_type='entity' AND e2.src_type='source'"
                 " JOIN notes n2 ON n2.source_id=e2.src_id AND n2.kind='source'"
                 " WHERE e1.src_type='source' AND e1.src_id=? AND e2.src_id<>? AND n2.path IS NOT NULL"
                 " LIMIT 3",

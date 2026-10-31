@@ -17,11 +17,20 @@ class WebConnector(Connector):
     name = "web"
     kind = "http"
 
+    MAX_BYTES = 8 * 1024 * 1024
+
     def fetch(self, url: str, timeout: float = 30.0) -> tuple[str, str]:
         with httpx.Client(timeout=timeout, follow_redirects=True, headers={"User-Agent": UA}) as c:
             r = c.get(url)
             r.raise_for_status()
-            ctype = r.headers.get("content-type", "")
+            length = int(r.headers.get("content-length") or 0)
+            if length > self.MAX_BYTES:
+                raise ValueError(f"响应过大（{length} bytes）")
+            ctype = r.headers.get("content-type", "").lower()
+            if not any(k in ctype for k in ("html", "xml", "json", "text/")):
+                raise ValueError(f"不支持的内容类型：{ctype or 'unknown'}")
+            if len(r.content) > self.MAX_BYTES:
+                raise ValueError("响应体超过 8MB")
             if "html" not in ctype and "xml" not in ctype:
                 text = r.text
                 title = url.rsplit("/", 1)[-1] or url

@@ -349,7 +349,7 @@ async def _stream_ask(question: str, save: bool, history: list[dict[str, Any]],
         if masked:
             yield sse({"type": "status", "text": "敏感来源：脱敏生成中…"})
         try:
-            async for delta in iterate_in_threadpool(llm().stream(prepared["messages"], max_tokens=1800)):
+            async for delta in iterate_in_threadpool(llm("ask").stream(prepared["messages"], max_tokens=1800)):
                 buf.append(delta)
                 if not masked:
                     yield sse({"type": "delta", "text": delta})

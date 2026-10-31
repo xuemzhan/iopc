@@ -41,7 +41,7 @@ class FilesConnector(Connector):
     def ingest(self, path: str | Path, publish: bool | None = None) -> dict[str, Any]:
         p = Path(path).resolve()
         text = read_text_any(p)
-        if not text.strip() or text.startswith("[读取失败"):
+        if not text.strip() or text.startswith(("[读取失败", "[PDF 读取失败")):
             raise ValueError(f"无法提取文本：{p.name}")
         st = p.stat()
         return capture(

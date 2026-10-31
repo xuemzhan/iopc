@@ -11,7 +11,7 @@ from typing import Any
 
 from .db import Database, db
 from .llm import llm
-from .util import ensure_unique, normalize_key, slugify, today
+from .util import atomic_write, ensure_unique, normalize_key, slugify, today
 from .vault import Vault, _frontmatter, wikilink
 
 SYNTH_SYSTEM = """你是个人知识库的主编。把散落在多份来源里的同一主题，写成一张「主题综述页」。
@@ -174,8 +174,7 @@ def build(name: str, *, database: Database | None = None, kind: str | None = Non
         extra={"subject": target["name"], "subject_kind": target["kind"],
                "generated_at": today(), "source_count": str(len(items))},
     )
-    path.write_text(fm + f"\n# 主题：{target['name']}\n\n" + "\n".join(body),
-                    encoding="utf-8", newline="\n")
+    atomic_write(path, fm + f"\n# 主题：{target['name']}\n\n" + "\n".join(body))
 
     # 回链到实体/概念页
     if target["path"]:
@@ -189,7 +188,7 @@ def build(name: str, *, database: Database | None = None, kind: str | None = Non
                     text = text.rstrip() + "\n" + link + "\n"
                 else:
                     text = text.rstrip() + "\n\n## 综合\n" + link + "\n"
-                p.write_text(text, encoding="utf-8", newline="\n")
+                atomic_write(p, text)
 
     vault.index_add("synthetic", slug, f"主题：{target['name']}", [], "- type: topic")
     vault.log([f"synthesize `{target['name']}` ← {len(items)} 份来源 → `{vault.rel(path)}`"])

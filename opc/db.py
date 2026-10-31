@@ -164,6 +164,11 @@ CREATE TABLE IF NOT EXISTS llm_usage (
   ts TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_llm_usage_ts ON llm_usage(ts);
+CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source_id);
+CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source_id);
+CREATE INDEX IF NOT EXISTS idx_notes_source ON notes(source_id);
+CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_entities_updated ON entities(updated_at DESC);
 """
 
 
@@ -232,6 +237,7 @@ class Database:
         conn = sqlite3.connect(self.path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
     @contextmanager

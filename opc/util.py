@@ -68,10 +68,24 @@ def from_json(text: str | None, default: Any = None) -> Any:
 
 
 def atomic_write(path: Path, text: str) -> None:
+    """唯一临时名（并发不互替）+ 目标被 OneDrive/杀软占用时重试。"""
+    import os
+    import time
+    import uuid
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_suffix(path.suffix + f".tmp-{os.getpid()}-{uuid.uuid4().hex[:6]}")
     tmp.write_text(text, encoding="utf-8", newline="\n")
-    tmp.replace(path)
+    last: Exception | None = None
+    for attempt in range(5):
+        try:
+            tmp.replace(path)
+            return
+        except PermissionError as exc:  # 文件被占用
+            last = exc
+            time.sleep(0.08 * (attempt + 1))
+    tmp.unlink(missing_ok=True)
+    raise last or OSError("atomic_write failed")
 
 
 def chunk_text(text: str, size: int = 9000, overlap: int = 400) -> list[str]:

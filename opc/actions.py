@@ -12,7 +12,7 @@ from typing import Any
 from .config import cfg
 from .connectors import get as get_connector
 from .db import Database, db
-from .util import today
+from .util import atomic_write, today
 from .vault import Vault, _frontmatter, wikilink
 
 ACTION_LINE = re.compile(r"^- \[ \] (?P<text>.+?)(?: —— @(?P<owner>.+))?$")
@@ -37,12 +37,16 @@ def collect(database: Database | None = None, limit: int = 200) -> list[dict[str
                 continue
             if not in_sec:
                 continue
-            m = re.match(r"^- \[ \] (.+?)(?: —— @(.+))?$", line.strip())
+            m = re.match(r"^- \[ \] (.+)$", line.strip())
             if not m:
                 continue
+            body = m.group(1).strip()
+            text, owner = body, ""
+            if " —— @" in body:
+                text, owner = body.rsplit(" —— @", 1)
             out.append({
-                "text": m.group(1).strip(),
-                "owner": (m.group(2) or "").strip(),
+                "text": text.strip(),
+                "owner": owner.strip(),
                 "note": r["title"],
                 "slug": r["slug"],
                 "source_id": r["source_id"],
@@ -93,7 +97,7 @@ def sync_page(database: Database | None = None) -> dict[str, Any]:
         "", f"## 待办（{len(todo)}）", *(todo or ["- 暂无"]), "",
         f"## 已完成（{len(done)}）", *(done or ["- 暂无"]), "",
     ]
-    page.write_text("\n".join(body), encoding="utf-8", newline="\n")
+    atomic_write(page, "\n".join(body))
     vault.log([f"actions 同步：待办 {len(todo)} / 完成 {len(done)} → `{vault.rel(page)}`"])
     return {"path": vault.rel(page), "todo": len(todo), "done": len(done), "items": len(items)}
 

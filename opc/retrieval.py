@@ -88,14 +88,16 @@ def search(database: "Database", query: str, limit: int = 8, *,
     if use_alias:
         channels["alias"] = database._alias_hits(q, max(2, limit // 2))
 
-    for qq in queries:
+    for i, qq in enumerate(queries):
         terms = _terms(qq)
         long_terms = [t for t in terms if len(t) >= 3][:8]
         if long_terms:
             fts_q = " OR ".join(f'"{t}"' for t in long_terms)
             channels["fts"] += database._fts(fts_q, wide)
-        like_terms = [t for t in terms if len(t) >= 2][:6] or [qq]
-        channels["like"] += database._like(like_terms, wide)
+        # LIKE 是全文扫描：只给原查询兜底，且只在 FTS 召回不足时跑
+        if i == 0 and (not long_terms or len(channels["fts"]) < 3):
+            like_terms = [t for t in terms if len(t) >= 2][:6] or [qq]
+            channels["like"] += database._like(like_terms, wide)
 
     return _fuse(channels, limit, q=q)
 
