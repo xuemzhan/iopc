@@ -447,6 +447,23 @@ async def delete_graph_edge(edge_id: int) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.get("/api/graph/edits")
+def graph_edits(limit: int = 20) -> dict[str, Any]:
+    from ..graph_edit import list_edits
+
+    return {"items": list_edits(limit=limit)}
+
+
+@app.post("/api/graph/undo")
+async def graph_undo() -> dict[str, Any]:
+    from ..graph_edit import undo_last
+
+    try:
+        return await run_in_threadpool(lambda: undo_last(db()))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/graph/edges")
 async def add_graph_edge(body: EdgeIn) -> dict[str, Any]:
     from ..graph_edit import create_edge

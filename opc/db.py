@@ -164,6 +164,14 @@ CREATE TABLE IF NOT EXISTS llm_usage (
   ts TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_llm_usage_ts ON llm_usage(ts);
+
+CREATE TABLE IF NOT EXISTS graph_edits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  undone INTEGER NOT NULL DEFAULT 0
+);
 CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source_id);
 CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source_id);
 CREATE INDEX IF NOT EXISTS idx_notes_source ON notes(source_id);

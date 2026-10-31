@@ -218,6 +218,7 @@
       <button data-g="in" title="放大">+</button>
       <button class="wide" data-g="fit" title="适配窗口">适配</button>
       <button data-g="full" title="全屏">⛶</button>
+      <button data-g="undo" title="撤销上一步">↶</button>
       <span id="gzoom">100%</span>
     </div>
     <canvas id="canvas"></canvas>
@@ -1002,6 +1003,13 @@ function bindGraphToolbar() {
   bind('[data-g="in"]', () => { G.scale = Math.min(4, G.scale * 1.2); drawGraphFrame(); });
   bind('[data-g="out"]', () => { G.scale = Math.max(0.25, G.scale / 1.2); drawGraphFrame(); });
   bind('[data-g="fit"]', () => fitGraph());
+  bind('[data-g="undo"]', async () => {
+    try {
+      const r = await api("/api/graph/undo", { method: "POST" });
+      toast(r.undone === "rename" ? "已撤销重命名" : "已撤销连线操作");
+      await drawGraph();
+    } catch (e) { toast("撤销失败：" + e.message); }
+  });
   bind('[data-g="full"]', () => {
     const d = $("#drawer");
     d.classList.toggle("full");

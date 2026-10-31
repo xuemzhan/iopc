@@ -47,7 +47,9 @@ class Config:
 
     @property
     def data_dir(self) -> Path:
-        p = Path(self.get("data.dir", str(ROOT / "data")))
+        # 环境变量优先：便于用临时库跑测试，不污染真实 data/
+        raw = os.environ.get("OPC_DATA_DIR") or self.get("data.dir", str(ROOT / "data"))
+        p = Path(raw)
         p.mkdir(parents=True, exist_ok=True)
         return p
 
@@ -57,7 +59,7 @@ class Config:
 
     @property
     def vault_path(self) -> Path:
-        raw = self.get("vault.path", "")
+        raw = os.environ.get("OPC_VAULT_PATH") or self.get("vault.path", "")
         if not raw:
             raise RuntimeError("vault.path 未配置")
         return Path(os.path.expandvars(raw)).expanduser()

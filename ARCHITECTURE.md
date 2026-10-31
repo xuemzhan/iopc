@@ -173,7 +173,7 @@ SSE 细节：`POST /api/ask/stream` 先推 `citations`（含 `search_query` 与 
 
 **多轮追问**：前端把最近 3 轮放进 `history`；服务端先用一次便宜调用把「那第二条呢」改写成可检索的问题（`ask.rewrite_followups`），再拿改写结果去检索，最后把 history + 检索结果一起交给模型。没有这一步，追问句在检索端等于零信息。
 
-**图谱编辑（v0.7）**：画布支持缩放/平移/拖拽/聚焦；选中节点后可重命名（只改显示名与页面 title/H1，`key` 与文件名保持稳定，避免链接断裂）、在两节点间加 `related_to` 边、或删除任意一条边（`DELETE /api/graph/edges/{id}`）。这些是「人给的判断」，与抽取结果分开记账（人工边 `evidence="人工连线"`）。
+**图谱编辑（v0.7）**：画布支持缩放/平移/拖拽/聚焦；选中节点后可重命名（只改显示名与页面 title/H1，`key` 与文件名保持稳定，避免链接断裂）、在两节点间加 `related_to` 边、或删除任意一条边（`DELETE /api/graph/edges/{id}`）。这些是「人给的判断」，与抽取结果分开记账（人工边 `evidence="人工连线"`）；每次编辑写一条 `graph_edits`（kind + 逆操作 payload），`POST /api/graph/undo` 按栈顶回滚，重命名会同时还原页面 title/H1。
 
 **会话存储（v0.5）**：`conversations` + `conversation_messages` 两张表。`/api/ask*` 不带 `conversation_id` 时自动建会话，服务端自己取最近 6 条历史——刷新页面、换设备都不丢上下文；右侧「对话」标签只是这张表的视图。
 
