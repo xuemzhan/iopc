@@ -1,5 +1,5 @@
 // OPC 控制台的离线外壳：只缓存静态资源，API 一律走网络
-const CACHE = "opc-shell-v1";
+const CACHE = "opc-shell-v2";
 const SHELL = ["/", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {
