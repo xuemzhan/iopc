@@ -476,7 +476,8 @@ def repair(redistill: bool = typer.Option(False, "--redistill",
 
 @app.command()
 def rebuild(from_vault: bool = typer.Option(False, "--from-vault",
-                                            help="从 Obsidian 库重建 SQLite 索引")) -> None:
+                                            help="从 Obsidian 库重建 SQLite 索引"),
+            force: bool = typer.Option(False, "--force", help="Hub 运行时也强制替换")) -> None:
     """删库恢复：用 wiki/ 里的 Markdown 重建 sources / notes / entities / edges。"""
     from .rebuild import rebuild as do_rebuild
 
@@ -484,7 +485,7 @@ def rebuild(from_vault: bool = typer.Option(False, "--from-vault",
         console.print("用法：opc rebuild --from-vault（会先备份 data/opc.db）")
         return
     with console.status("[cyan]从库重建索引…"):
-        res = do_rebuild(from_vault=True)
+        res = do_rebuild(from_vault=True, force=force)
     table = Table(title="重建结果")
     table.add_column("对象")
     table.add_column("数量", justify="right")

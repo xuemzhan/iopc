@@ -28,7 +28,7 @@ def to_pcm(path: str | Path) -> bytes:
     """任意音频 → 16kHz 单声道 float32 PCM。"""
     proc = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", str(path), "-f", "f32le", "-ar", "16000", "-ac", "1", "-"],
-        capture_output=True,
+        capture_output=True, stdin=subprocess.DEVNULL, timeout=120,
     )
     if proc.returncode != 0 or not proc.stdout:
         raise RuntimeError(f"ffmpeg 转码失败：{proc.stderr.decode('utf-8', 'ignore')[:300]}")
@@ -127,7 +127,7 @@ def record(seconds: int = 8, device: str | None = None) -> str:
     proc = subprocess.run(
         ["ffmpeg", "-v", "error", "-f", "dshow", "-i", f"audio={dev}", "-t", str(seconds),
          "-ar", "16000", "-ac", "1", str(out)],
-        capture_output=True,
+        capture_output=True, stdin=subprocess.DEVNULL, timeout=seconds + 30,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"录音失败：{proc.stderr.decode('utf-8', 'ignore')[:300]}")

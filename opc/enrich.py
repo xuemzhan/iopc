@@ -113,7 +113,9 @@ def enrich_one(database: Database, item: dict[str, Any]) -> dict[str, Any]:
     related = [str(r).strip() for r in (data.get("related") or []) if str(r).strip()][:4]
 
     vault = Vault()
-    p = vault.root / item["path"]
+    p = vault.safe_path(item["path"])
+    if p is None:
+        return {"skipped": "非法路径", **item}
     text = p.read_text(encoding="utf-8")
     new = _set_overview(text, summary)
     new = _set_key_facts(new, facts)

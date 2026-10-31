@@ -1,6 +1,6 @@
 # OPC 一键启动：拉起中枢（已在跑则复用），再打开控制台
 $ErrorActionPreference = "SilentlyContinue"
-$root = Split-Path -Parent $PSScriptRoot
+$root = "<repo>"
 $env:PYTHONPATH = $root
 $env:PYTHONIOENCODING = "utf-8"
 Set-Location $root

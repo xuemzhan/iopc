@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -57,30 +56,43 @@ PUBLIC_PATHS = ("/static/", "/manifest.webmanifest", "/sw.js", "/icon-192.png",
                 "/icon-512.png", "/favicon.ico")
 
 
+def _host_allowed(host: str, token: str) -> bool:
+    """Host 头白名单：防 DNS rebinding（攻击者域名解析到 127.0.0.1）。"""
+    import ipaddress
+
+    host = (host or "").split(":")[0].strip("[]").lower()
+    if host in ("127.0.0.1", "localhost", "::1", "testserver"):
+        return True
+    if token:
+        try:
+            return ipaddress.ip_address(host).is_private
+        except ValueError:
+            return False
+    return False
+
+
 @app.middleware("http")
 async def token_guard(request, call_next):
-    """配了令牌时，非本机请求必须带 token；本机永远放行。"""
+    """Host 白名单 + 令牌校验；本机请求免令牌，但同样校验 Host。"""
+    import hmac
     import os
 
     token = os.environ.get("OPC_TOKEN") or cfg().get("security.token", "")
-    if not token:
+    host_header = request.headers.get("host", "")
+    if not _host_allowed(host_header, token):
+        return JSONResponse({"detail": "Host 不在允许列表"}, status_code=403)
+
+    client = request.client.host if request.client else ""
+    if not token or client in ("127.0.0.1", "::1", "localhost", "testclient"):
         return await call_next(request)
-    host = request.client.host if request.client else ""
-    if host in ("127.0.0.1", "::1", "localhost"):
-        return await call_next(request)
+
     path = request.url.path
     if path == "/" or path.startswith(PUBLIC_PATHS):
         return await call_next(request)
     supplied = request.headers.get("x-opc-token") or request.query_params.get("token") or ""
-    if supplied != token:
+    if not hmac.compare_digest(supplied, token):
         return JSONResponse({"detail": "需要访问令牌（?token=… 或 X-OPC-Token）"}, status_code=401)
     return await call_next(request)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 # ------------------------------------------------------------------ 模型

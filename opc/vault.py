@@ -89,6 +89,17 @@ class Vault:
         atomic_write(path, f"{fm}\n# {title}\n\n{summary}\n\n{body}\n")
         return path
 
+    def safe_path(self, rel: str) -> Path | None:
+        """把 DB 里的相对路径解析到库内；越界返回 None。"""
+        if not rel:
+            return None
+        root = self.root.resolve()
+        try:
+            p = (self.root / rel).resolve()
+        except OSError:
+            return None
+        return p if p.is_relative_to(root) else None
+
     def page_exists(self, kind: str, slug: str) -> bool:
         return self.page_path(kind, slug).exists()
 

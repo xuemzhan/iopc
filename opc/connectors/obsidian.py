@@ -70,7 +70,7 @@ class ObsidianConnector(Connector):
             out.append(
                 capture(
                     kind="file",
-                    external_id=f"vault-raw|{p}|{int(st.st_mtime)}",
+                    external_id=f"vault-raw|{p}",
                     title=p.stem,
                     text=text,
                     uri=str(p),

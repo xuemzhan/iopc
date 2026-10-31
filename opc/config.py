@@ -66,7 +66,7 @@ class Config:
         env = self.get("llm.api_key_env", "DEEPSEEK_API_KEY")
         key = os.environ.get(env, "")
         if not key:
-            raise RuntimeError(f"缺少 LLM 密钥：请设置环境变量 {env}（写入仓库根目录的 .env）")
+            raise RuntimeError(f"缺少 LLM 密钥：请设置环境变量 {env}（写入 E:\\opc\\.env）")
         return key
 
     def tool(self, name: str) -> dict[str, Any]:

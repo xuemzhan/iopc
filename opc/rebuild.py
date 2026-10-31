@@ -177,18 +177,43 @@ def build_from_vault(vault: Vault | None = None, db_path: Path | None = None) ->
     return {"db": str(db_path), "counts": counts}
 
 
+def _hub_alive() -> bool:
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:5370/api/health", timeout=1) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
 def swap_in(db_path: Path, backup_dir: Path | None = None) -> str:
-    """把重建好的库替换为正式库，旧库留一份备份。"""
+    """把重建好的库替换为正式库：先 checkpoint，再复制备份，最后原子替换。
+
+    顺序保证：目标库在任何时刻都存在（复制而非移动），WAL 里的事务不会被丢掉。
+    """
+    import sqlite3
+
     backup_dir = backup_dir or db_path.parent
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     backup = backup_dir / f"opc.db.bak-{stamp}"
+
     if db_path.exists():
-        shutil.move(str(db_path), str(backup))
+        # 把 WAL 落盘，保证备份与替换后的库都包含最新事务
+        try:
+            con = sqlite3.connect(str(db_path))
+            con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            con.close()
+        except Exception:
+            pass
+        shutil.copy2(str(db_path), str(backup))
+
+    tmp = db_path.parent / "opc-rebuild.db"
+    os.replace(str(tmp), str(db_path))  # 原子替换，目标不会出现空窗
     for suffix in ("-wal", "-shm"):
         side = Path(str(db_path) + suffix)
         if side.exists():
             side.unlink()
-    os.replace(str(db_path.parent / "opc-rebuild.db"), str(db_path))
     return str(backup)
 
 
@@ -209,9 +234,11 @@ def _build_in_subprocess(tmp: Path, vault_root: Path) -> None:
 
 
 def rebuild(*, from_vault: bool = False, database_path: Path | None = None,
-            vault: Vault | None = None) -> dict[str, Any]:
+            vault: Vault | None = None, force: bool = False) -> dict[str, Any]:
     if not from_vault:
         raise ValueError("目前只支持 --from-vault")
+    if _hub_alive() and not force:
+        raise RuntimeError("Hub 正在运行，重建会替换数据库；先停 Hub，或加 --force")
     vault = vault or Vault()
     target = Path(database_path) if database_path else cfg_db_path()
     tmp = target.parent / "opc-rebuild.db"

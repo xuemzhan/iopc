@@ -10,8 +10,8 @@ $hub = "http://127.0.0.1:5370"
 $alive = $false
 try { if ((Invoke-RestMethod "$hub/api/health" -TimeoutSec 2).ok) { $alive = $true } } catch { }
 if (-not $alive) {
-    $env:PYTHONPATH = (Split-Path -Parent $PSScriptRoot)
-    Start-Process -FilePath "python" -ArgumentList "-m", "opc", "serve" -WorkingDirectory (Split-Path -Parent $PSScriptRoot) -WindowStyle Hidden
+    $env:PYTHONPATH = "<repo>"
+    Start-Process -FilePath "python" -ArgumentList "-m", "opc", "serve" -WorkingDirectory "<repo>" -WindowStyle Hidden
     Start-Sleep -Seconds 3
 }
 

@@ -1,6 +1,6 @@
-# OPC 配置示例：复制为 config/opc.toml 后按需修改
-# 密钥只放 .env，不要写在这里。
-# 路径可用相对路径（相对仓库根目录）或绝对路径。
+# OPC 配置示例
+# 复制为 config/opc.toml 后修改；密钥只放 .env。
+# 路径支持 ~ 与环境变量（%USERPROFILE% / $HOME）。
 
 # OPC 中枢配置 —— 所有工具的唯一接线处
 # 改这里，不用改代码。密钥放在 .env（已 gitignore）。
@@ -36,7 +36,7 @@ max_input_chars = 24000
 temperature = 0.2
 
 [data]
-dir = '.\data'
+dir = './data'
 
 [ingest]
 # 提炼后是否自动建立双向链接与索引
@@ -103,22 +103,22 @@ rest_token = ""
 [tools.opencode]
 enabled = true
 kind = "sqlite"
-db = '~\.local\share\opencode\opencode.db'
-config_dir = '~\.config\opencode'
+db = '%USERPROFILE%/.local/share/opencode/opencode.db'
+config_dir = '%USERPROFILE%/.config/opencode'
 # 只读采集：会话与消息摘要，不回写 OpenCode
 read_only = true
 
 [tools.pi_desktop]
 enabled = true
 kind = "sqlite"
-home = '~\.pi-desktop'
-db = '~\.pi-desktop\pi.sqlite'
+home = '%USERPROFILE%/.pi-desktop'
+db = '%USERPROFILE%/.pi-desktop/pi.sqlite'
 read_only = true
 
 [tools.workbuddy]
 enabled = true
 kind = "fs"
-home = '~\.workbuddy-ai'
+home = '%USERPROFILE%/.workbuddy-ai'
 read_only = true
 
 [tools.mindmap]
@@ -131,7 +131,7 @@ xmind_dir = ''
 [tools.files]
 enabled = true
 kind = "fs"
-watch_dirs = ['.\inbox']
+watch_dirs = ['./inbox']
 extensions = [".md", ".txt", ".pdf", ".docx", ".pptx", ".xlsx", ".html", ".json", ".csv"]
 
 [agents]
@@ -142,7 +142,7 @@ enabled = ["obsidian", "imeeting"]
 [policy]
 # 敏感闸：命中关键词的来源，送模型前把机构/人名令牌化，回来再还原
 sensitive_enabled = true
-keywords = ["示例", "示例部门", "项目甲", "项目", "行业", "内部", "重要", "部门"]
+keywords = ["示例机构", "示例项目", "内部", "机密"]
 mask_entities = true
 
 # ---- 多模型路由（PATCH 2）----

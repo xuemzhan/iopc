@@ -23,3 +23,9 @@ scripts/_*.py
 
 # 本机会话状态
 .omo/
+
+# 本机真实配置（只提交 .example）
+config/opc.toml
+.pytest_cache/
+*.log
+*.wav

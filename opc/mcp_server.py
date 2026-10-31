@@ -3,7 +3,7 @@
 用法（任一客户端配置里）：
   command: python
   args: ["-m", "opc.mcp_server"]
-  env:  { PYTHONPATH: "<repo>" }
+  env:  { PYTHONPATH: "E:\\opc" }
 """
 from __future__ import annotations
 
@@ -19,7 +19,9 @@ from .db import db
 from .pipeline import ask as ask_pipeline
 
 PROTOCOL = "2024-11-05"
-SERVER = {"name": "opc-hub", "version": "0.1.0"}
+from . import __version__
+
+SERVER = {"name": "opc-hub", "version": __version__}
 
 TOOLS: list[dict[str, Any]] = [
     {

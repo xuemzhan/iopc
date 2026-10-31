@@ -236,6 +236,7 @@ class JobWorker:
         self.log("任务执行器已启动")
         while not self._stop.is_set():
             try:
+                self.db.requeue_stale(30)
                 n = run_worker(max_jobs=20, database=self.db)
                 self.runs += 1
                 self.last = {"at": now_iso(), "processed": n}

@@ -53,13 +53,7 @@ def classify(text: str, title: str = "") -> bool:
     return any(k in hay for k in kws)
 
 
-def mask(text: str) -> tuple[str, dict[str, str]]:
-    """把机构名/人名替换成稳定令牌。同一原文在同一请求内永远是同一个令牌。"""
-    if not text or not enabled():
-        return text, {}
-    mapping: dict[str, str] = {}
-    counters = {"ORG": 0, "PERSON": 0}
-
+def _mask_with(text: str, mapping: dict[str, str], counters: dict[str, int]) -> str:
     def token(kind: str, original: str) -> str:
         for tok, orig in mapping.items():
             if orig == original:
@@ -70,12 +64,10 @@ def mask(text: str) -> tuple[str, dict[str, str]]:
         return tok
 
     out = text
-    # 1) 机构：关键词按长度降序，先长后短，避免「示例」把「示例机构」切碎
     for kw in sorted(keywords(), key=len, reverse=True):
         if kw and kw in out:
             out = out.replace(kw, token("ORG", kw))
 
-    # 2) 人名：只在明确的「说/做」上下文里替换，降低误判
     names: list[str] = []
     for pattern in (_PERSON_VERB, _PERSON_ROLE):
         for m in pattern.finditer(out):
@@ -84,8 +76,24 @@ def mask(text: str) -> tuple[str, dict[str, str]]:
                 names.append(name)
     for name in names:
         out = out.replace(name, token("PERSON", name))
+    return out
 
-    return out, mapping
+
+def mask_many(texts: list[str]) -> tuple[list[str], dict[str, str]]:
+    """一次调用内共享计数器：同一原文在任何字段里都是同一个令牌。"""
+    if not enabled():
+        return list(texts), {}
+    mapping: dict[str, str] = {}
+    counters = {"ORG": 0, "PERSON": 0}
+    return [_mask_with(t or "", mapping, counters) for t in texts], mapping
+
+
+def mask(text: str) -> tuple[str, dict[str, str]]:
+    """把机构名/人名替换成稳定令牌。同一原文在同一请求内永远是同一个令牌。"""
+    if not text or not enabled():
+        return text, {}
+    out, mapping = mask_many([text])
+    return out[0], mapping
 
 
 def unmask(text: str, mapping: dict[str, str]) -> str:
@@ -100,16 +108,5 @@ def unmask(text: str, mapping: dict[str, str]) -> str:
 
 def mask_messages(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """一次性脱敏整组消息，返回共享映射（跨分块复用）。"""
-    mapping: dict[str, str] = {}
-    out: list[dict[str, Any]] = []
-
-    def merge(new_map: dict[str, str]) -> None:
-        for tok, orig in new_map.items():
-            mapping.setdefault(tok, orig)
-
-    for msg in messages:
-        content = str(msg.get("content", ""))
-        masked, m = mask(content)
-        merge(m)
-        out.append({**msg, "content": masked})
-    return out, mapping
+    masked, mapping = mask_many([str(m.get("content", "")) for m in messages])
+    return [{**m, "content": masked[i]} for i, m in enumerate(messages)], mapping

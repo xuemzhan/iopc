@@ -45,7 +45,7 @@ def prune(apply: bool = False, database: Database | None = None) -> dict[str, An
             c.execute("DELETE FROM edges WHERE (src_type=? AND src_id=?) OR (dst_type=? AND dst_id=?)",
                       (it["kind"], it["id"], it["kind"], it["id"]))
             c.execute(f"DELETE FROM {table} WHERE id=?", (it["id"],))
-        p = vault.root / it["path"] if it["path"] else None
+        p = vault.safe_path(it["path"]) if it["path"] else None
         if p and p.exists() and _page_matches(p, it["name"]):
             p.unlink()
         elif p and p.exists():

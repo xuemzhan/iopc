@@ -47,7 +47,7 @@ class OpenCodeConnector(Connector):
             rows = c.execute(
                 "SELECT p.data AS pdata, m.data AS mdata, p.time_created"
                 " FROM part p JOIN message m ON m.id = p.message_id"
-                " WHERE p.session_id=? ORDER BY p.time_created",
+                " WHERE p.session_id=? ORDER BY p.time_created DESC LIMIT 400",
                 (session_id,),
             ).fetchall()
         title = (srow["title"] if srow else "") or session_id
@@ -79,7 +79,7 @@ class OpenCodeConnector(Connector):
                     continue
                 out.append(capture(
                     kind="chat",
-                    external_id=f"opencode:{s['id']}:{s['last_at']}",
+                    external_id=f"opencode:{s['id']}",
                     title=f"[OpenCode] {title}",
                     text=body,
                     uri=f"opencode://session/{s['id']}",
@@ -186,7 +186,7 @@ class WorkBuddyConnector(Connector):
             if len(text.strip()) < 40:
                 continue
             out.append(capture(
-                kind="note", external_id=f"workbuddy:{p.name}:{int(p.stat().st_mtime)}",
+                kind="note", external_id=f"workbuddy:{p.name}",
                 title=f"[WorkBuddy] {p.stem}", text=text, uri=str(p),
                 meta={"tool": "workbuddy"}, publish=publish,
             ))

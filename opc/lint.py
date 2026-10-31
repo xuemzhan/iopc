@@ -235,7 +235,9 @@ def run(*, apply_warnings: bool = False, max_checks: int | None = None,
     if apply_warnings and conflicts:
         for c in conflicts:
             for target, other in ((c["a"], c["b_title"]), (c["b"], c["a_title"])):
-                p = vault.root / target
+                p = vault.safe_path(target)
+                if p is None or not p.exists():
+                    continue
                 blob = p.read_text(encoding="utf-8")
                 warn = (f"> [!warning] 与《{other}》存在潜在冲突\n"
                         f"> {c['reason']}（{c['severity']}）\n")

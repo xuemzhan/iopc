@@ -36,7 +36,7 @@ def capture(
     with database.connect() as c:
         row = c.execute(
             "SELECT s.id, s.content_hash,"
-            " (SELECT COUNT(*) FROM notes n WHERE n.source_id=s.id AND n.status='published') AS pub"
+            " (SELECT COUNT(*) FROM notes n WHERE n.source_id=s.id) AS pub"
             " FROM sources s WHERE s.kind=? AND s.external_id=?",
             (kind, external_id),
         ).fetchone()

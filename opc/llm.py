@@ -63,7 +63,7 @@ class LLM:
         if self._api_key is None:
             key = os.environ.get(self.api_key_env, "")
             if not key:
-                raise LLMError(f"缺少密钥：环境变量 {self.api_key_env}（写入仓库根目录的 .env）")
+                raise LLMError(f"缺少密钥：环境变量 {self.api_key_env}（写入 E:\\opc\\.env）")
             self._api_key = key
         return self._api_key
 

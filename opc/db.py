@@ -311,23 +311,29 @@ class Database:
                     ),
                 )
                 return int(row["id"])
-            cur = c.execute(
-                "INSERT INTO sources(kind, external_id, title, uri, author, occurred_at,"
-                " captured_at, content_hash, raw_path, meta) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (
-                    kind,
-                    external_id,
-                    title,
-                    uri,
-                    author,
-                    occurred_at,
-                    now_iso(),
-                    content_hash,
-                    raw_path,
-                    to_json(meta or {}),
-                ),
-            )
-            return int(cur.lastrowid)
+            try:
+                cur = c.execute(
+                    "INSERT INTO sources(kind, external_id, title, uri, author, occurred_at,"
+                    " captured_at, content_hash, raw_path, meta) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (kind, external_id, title, uri, author, occurred_at, now_iso(),
+                     content_hash, raw_path, to_json(meta or {})),
+                )
+                return int(cur.lastrowid)
+            except sqlite3.IntegrityError:
+                # 并发插入撞唯一键：回到更新分支
+                row = c.execute(
+                    "SELECT id FROM sources WHERE kind=? AND external_id=?",
+                    (kind, external_id),
+                ).fetchone()
+                if not row:
+                    raise
+                c.execute(
+                    "UPDATE sources SET title=?, uri=?, author=?, occurred_at=?,"
+                    " captured_at=?, content_hash=?, raw_path=?, meta=? WHERE id=?",
+                    (title, uri, author, occurred_at, now_iso(), content_hash, raw_path,
+                     to_json(meta or {}), row["id"]),
+                )
+                return int(row["id"])
 
     def put_document(self, source_id: int, text: str) -> int:
         with self.tx() as c:
@@ -338,6 +344,12 @@ class Database:
                     (text, len(text), now_iso(), row["id"]),
                 )
                 doc_id = int(row["id"])
+                # 先清 FTS 再清 chunks（rowid 对齐；顺序反了会留孤儿行）
+                c.execute(
+                    "DELETE FROM chunks_fts WHERE rowid IN"
+                    " (SELECT id FROM chunks WHERE document_id=?)",
+                    (doc_id,),
+                )
                 c.execute("DELETE FROM chunks WHERE document_id=?", (doc_id,))
             else:
                 cur = c.execute(
@@ -351,12 +363,12 @@ class Database:
         from .util import chunk_text  # 局部导入避免循环
 
         with self.tx() as c:
-            c.execute("DELETE FROM chunks WHERE document_id=?", (doc_id,))
-            # FTS 用 rowid 对齐 chunks.id，重建整篇
+            # FTS rowid 对齐 chunks.id：必须先删 FTS，再删 chunks，否则子查询已空
             c.execute(
                 "DELETE FROM chunks_fts WHERE rowid IN (SELECT id FROM chunks WHERE document_id=?)",
                 (doc_id,),
             )
+            c.execute("DELETE FROM chunks WHERE document_id=?", (doc_id,))
             for i, ch in enumerate(chunks):
                 cur = c.execute(
                     "INSERT INTO chunks(document_id, source_id, idx, text) VALUES(?,?,?,?)",
@@ -461,7 +473,8 @@ class Database:
         with self.tx() as c:
             n = c.execute(
                 "SELECT COUNT(DISTINCT source_id) FROM edges"
-                " WHERE dst_type='entity' AND dst_id=? AND rel='mentions'",
+                " WHERE src_type='source' AND dst_type='entity' AND dst_id=?"
+                " AND rel='mentions' AND source_id IS NOT NULL",
                 (entity_id,),
             ).fetchone()[0]
             c.execute(
@@ -702,17 +715,30 @@ class Database:
             return int(cur.lastrowid)
 
     def claim_job(self) -> dict[str, Any] | None:
+        """单条 UPDATE 原子认领：多 worker 并发时同一 job 只会被领走一次。"""
         with self.tx() as c:
             row = c.execute(
-                "SELECT * FROM jobs WHERE status='pending' ORDER BY id LIMIT 1"
+                "UPDATE jobs SET status='running', started_at=?, attempts=attempts+1"
+                " WHERE id = (SELECT id FROM jobs WHERE status='pending'"
+                "             ORDER BY id LIMIT 1)"
+                " RETURNING *",
+                (now_iso(),),
             ).fetchone()
-            if not row:
-                return None
-            c.execute(
-                "UPDATE jobs SET status='running', started_at=?, attempts=attempts+1 WHERE id=?",
-                (now_iso(), row["id"]),
+        return dict(row) if row else None
+
+    def requeue_stale(self, minutes: int = 30) -> int:
+        """running 但超过 N 分钟没动静的任务，放回 pending（崩溃恢复）。"""
+        from datetime import datetime, timedelta
+
+        cutoff = (datetime.now().astimezone() - timedelta(minutes=minutes)).strftime(
+            "%Y-%m-%dT%H:%M:%S%z")
+        with self.tx() as c:
+            cur = c.execute(
+                "UPDATE jobs SET status='pending', error='requeued: stale running'"
+                " WHERE status='running' AND COALESCE(started_at, created_at) < ?",
+                (cutoff,),
             )
-            return dict(row)
+            return int(cur.rowcount or 0)
 
     def finish_job(self, job_id: int, ok: bool, error: str | None = None,
                    result: dict[str, Any] | None = None) -> None:

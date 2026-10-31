@@ -339,8 +339,8 @@ def distill_source(source_id: int, *, publish: bool = True, database: Database |
     mask_map: dict[str, str] = {}
     text_for_llm, title_for_llm = raw_text, title
     if sensitive and cfg().get("policy.mask_entities", True):
-        text_for_llm, mask_map = policy.mask(raw_text)
-        title_for_llm = policy.mask(title)[0]
+        masked, mask_map = policy.mask_many([title, raw_text])
+        title_for_llm, text_for_llm = masked
     try:
         database.merge_source_meta(source_id, {"sensitive": sensitive})
     except Exception:
@@ -433,7 +433,17 @@ def _note_slug(database: Database, source_id: int, title: str) -> str:
         ).fetchone()
     if row:
         return row["slug"]
-    return Vault().unique_slug("source", title)
+    base = Vault().unique_slug("source", title)
+    slug, i = base, 2
+    while True:
+        with database.connect() as c:
+            hit = c.execute(
+                "SELECT source_id FROM notes WHERE slug=? AND kind='source'", (slug,)
+            ).fetchone()
+        if not hit or hit["source_id"] == source_id:
+            return slug
+        slug = f"{base}-{i}"
+        i += 1
 
 
 # ---------------------------------------------------------------- 问答
@@ -545,10 +555,8 @@ def prepare_ask(question: str, database: Database | None = None,
     mask_map: dict[str, str] = {}
     q_prompt, sq_prompt = question, search_q
     if sensitive and cfg().get("policy.mask_entities", True):
-        context, m1 = policy.mask(context)
-        q_prompt, m2 = policy.mask(question)
-        sq_prompt, m3 = policy.mask(search_q)
-        mask_map = {**m1, **m2, **m3}
+        masked, mask_map = policy.mask_many([context, question, search_q])
+        context, q_prompt, sq_prompt = masked
     messages = [{"role": "system", "content": ASK_SYSTEM}]
     messages += _history_messages(history)
     tail = f"知识库片段：\n{context}\n\n问题：{q_prompt}"
