@@ -1,0 +1,25 @@
+# 运行时
+data/
+inbox/
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 密钥
+.env
+*.key
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
+
+# 临时
+scripts/_*.py
+
+# 本机会话状态
+.omo/

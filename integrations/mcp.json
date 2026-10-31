@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "opc": {
+      "command": "python",
+      "args": ["-m", "opc.mcp_server"],
+      "env": {
+        "PYTHONPATH": "<repo>",
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}

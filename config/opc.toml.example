@@ -1,0 +1,184 @@
+# OPC 配置示例：复制为 config/opc.toml 后按需修改
+# 密钥只放 .env，不要写在这里。
+# 路径可用相对路径（相对仓库根目录）或绝对路径。
+
+# OPC 中枢配置 —— 所有工具的唯一接线处
+# 改这里，不用改代码。密钥放在 .env（已 gitignore）。
+
+[hub]
+host = "127.0.0.1"
+port = 5370
+name = "OPC 中枢"
+
+[security]
+# 留空 = 只允许本机访问（默认）。想让手机/平板访问就设一个令牌：
+#   python -m opc token      （自动写入 .env 的 OPC_TOKEN）
+# 然后用 python -m opc serve --lan 启动，手机打开 http://<本机IP>:5370/?token=...
+token = ""
+
+[vault]
+# 已存在的 Obsidian 库：遵循库内 CLAUDE.md 的 LLM Wiki schema
+path = '~/Obsidian Vault'
+inbox = "inbox"        # 原始捕获落盘处（只增不改）
+wiki = "wiki"          # 提炼后的知识页
+write_raw = true       # 捕获时同时把原文写到 inbox/
+auto_publish = true    # 提炼后自动写入 wiki/（新建页面；已有页面只追加关联）
+protect_existing = true
+min_sources_for_page = 2   # 单来源实体只入库不建页；够 2 个来源才进 vault/图谱
+
+[llm]
+provider = "deepseek"
+base_url = "https://api.deepseek.com/v1"
+model = "deepseek-chat"
+api_key_env = "DEEPSEEK_API_KEY"
+timeout_s = 240
+max_input_chars = 24000
+temperature = 0.2
+
+[data]
+dir = '.\data'
+
+[ingest]
+# 提炼后是否自动建立双向链接与索引
+link_enabled = true
+index_enabled = true
+max_entities_per_doc = 24
+max_concepts_per_doc = 16
+
+[watch]
+# 值守：会议结束自动入库、inbox 自动扫、每天出综述
+enabled = true
+interval_s = 90
+meetings = true          # 只处理 status=finished 的会议，录制中不动
+inbox = true
+digest_at = "22:00"      # 每天这个点生成日报（已生成则跳过）
+lint_weekday = 7         # 每周几做体检（1=周一 … 7=周日）
+lint_at = "21:30"
+
+[digest]
+enabled = true
+daily = true
+weekly = true
+
+[lint]
+enabled = true
+max_contradiction_checks = 6   # 每次体检最多做几次 LLM 矛盾比对（控制成本）
+apply_warnings = false         # true 时把 > [!warning] 直接写进冲突页
+
+[actions]
+# 行动项聚合与回写
+enabled = true
+page = "行动项.md"
+push_to_imeeting = false       # true 时把会议行动项回写 iMeeting
+
+[ask]
+# 多轮追问时，先用一次便宜调用把「那第二条呢」改写成可检索的问题
+rewrite_followups = true
+
+[search]
+alias_boost = true             # 用实体/概念别名给检索加权
+rrf = true                     # 多通道 RRF 融合（关掉退回 v0.2 的串行检索）
+expand_queries = true          # 用 LLM 生成近义检索词（自动缓存）
+expand_cache_days = 30
+embeddings = false             # 装了 Ollama 后可开：ollama pull bge-m3
+ollama_url = "http://127.0.0.1:11434"
+embed_model = "bge-m3"
+
+[tools.imeeting]
+enabled = true
+kind = "http"
+base_url = "http://127.0.0.1:8000"
+ui_url = "http://127.0.0.1:5173"
+# REQUIRE_AUTH=0 时无需令牌；若开启鉴权，填 token 或走 /api/v1/auth/login
+token = ""
+
+[tools.obsidian]
+enabled = true
+kind = "vault"
+path = '~/Obsidian Vault'
+# 可选：安装 obsidian-local-rest-api 后填 http://127.0.0.1:27123 与 token
+rest_url = ""
+rest_token = ""
+
+[tools.opencode]
+enabled = true
+kind = "sqlite"
+db = '~\.local\share\opencode\opencode.db'
+config_dir = '~\.config\opencode'
+# 只读采集：会话与消息摘要，不回写 OpenCode
+read_only = true
+
+[tools.pi_desktop]
+enabled = true
+kind = "sqlite"
+home = '~\.pi-desktop'
+db = '~\.pi-desktop\pi.sqlite'
+read_only = true
+
+[tools.workbuddy]
+enabled = true
+kind = "fs"
+home = '~\.workbuddy-ai'
+read_only = true
+
+[tools.mindmap]
+enabled = true
+kind = "files"
+# 思维导图三个落点：Obsidian Canvas / markmind / iMeeting mindmap / XMind
+canvas_dir = ''   # 留空则自动用 vault 根目录
+xmind_dir = ''
+
+[tools.files]
+enabled = true
+kind = "fs"
+watch_dirs = ['.\inbox']
+extensions = [".md", ".txt", ".pdf", ".docx", ".pptx", ".xlsx", ".html", ".json", ".csv"]
+
+[agents]
+# 可被中枢调度的 AI 入口；用于「派活」
+opencode_cmd = "opencode"
+enabled = ["obsidian", "imeeting"]
+
+[policy]
+# 敏感闸：命中关键词的来源，送模型前把机构/人名令牌化，回来再还原
+sensitive_enabled = true
+keywords = ["示例", "示例部门", "项目甲", "项目", "行业", "内部", "重要", "部门"]
+mask_entities = true
+
+# ---- 多模型路由（PATCH 2）----
+# 密钥只从 .env 读；provider 缺 key 时只在该路由被用到时报错
+[llm.providers.deepseek]
+base_url = "https://api.deepseek.com/v1"
+api_key_env = "DEEPSEEK_API_KEY_FLASH"
+json_mode = true
+
+[llm.providers.zhipu]
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_key_env = "ZHIPU_API_KEY"
+json_mode = true
+
+[llm.models.flash]
+provider = "deepseek"
+model = "deepseek-chat"
+
+[llm.models.pro]
+provider = "deepseek"
+model = "deepseek-reasoner"
+
+[llm.models.embed]
+provider = "zhipu"
+model = "embedding-3"
+dim = 2048
+
+[llm.routes]
+default = "flash"
+extract = "flash"
+ask = "flash"
+brief = "flash"
+verdict = "pro"
+enrich = "pro"
+embed = "embed"
+
+[llm.budget]
+max_tokens_per_day = 3000000
+warn_at_ratio = 0.8
