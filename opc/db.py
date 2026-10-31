@@ -682,33 +682,40 @@ class Database:
             nodes: list[dict[str, Any]] = []
             min_src = int(cfg().get("vault.min_sources_for_page", 2))
             ents = c.execute(
-                "SELECT id, name, type, summary FROM entities"
+                "SELECT id, name, type, summary, page_path FROM entities"
                 " WHERE src_count >= ? OR status='confirmed'"
                 " ORDER BY updated_at DESC LIMIT ?",
                 (min_src, limit),
             ).fetchall()
             cons = c.execute(
-                "SELECT id, name, definition FROM concepts ORDER BY updated_at DESC LIMIT ?",
+                "SELECT id, name, definition, page_path FROM concepts ORDER BY updated_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
             srcs = c.execute(
                 "SELECT id, title, kind FROM sources ORDER BY id DESC LIMIT ?", (limit,)
             ).fetchall()
             for r in ents:
-                nodes.append({"id": f"entity:{r['id']}", "label": r["name"], "group": "entity"})
+                nodes.append({"id": f"entity:{r['id']}", "ref": int(r["id"]),
+                              "label": r["name"], "group": "entity", "type": r["type"],
+                              "summary": r["summary"] or "", "path": r["page_path"] or ""})
             for r in cons:
-                nodes.append({"id": f"concept:{r['id']}", "label": r["name"], "group": "concept"})
+                nodes.append({"id": f"concept:{r['id']}", "ref": int(r["id"]),
+                              "label": r["name"], "group": "concept", "type": "concept",
+                              "summary": r["definition"] or "", "path": r["page_path"] or ""})
             for r in srcs:
-                nodes.append({"id": f"source:{r['id']}", "label": r["title"][:40], "group": r["kind"]})
+                nodes.append({"id": f"source:{r['id']}", "ref": int(r["id"]),
+                              "label": r["title"][:40], "group": r["kind"], "type": r["kind"],
+                              "summary": "", "path": ""})
             ids = {n["id"] for n in nodes}
             links = []
             for r in c.execute(
-                "SELECT src_type, src_id, dst_type, dst_id, rel, weight FROM edges LIMIT 4000"
+                "SELECT id, src_type, src_id, dst_type, dst_id, rel, weight FROM edges LIMIT 4000"
             ).fetchall():
                 a = f"{r['src_type']}:{r['src_id']}"
                 b = f"{r['dst_type']}:{r['dst_id']}"
                 if a in ids and b in ids:
-                    links.append({"source": a, "target": b, "rel": r["rel"], "weight": r["weight"]})
+                    links.append({"id": int(r["id"]), "source": a, "target": b,
+                                  "rel": r["rel"], "weight": r["weight"]})
             return {"nodes": nodes, "links": links}
 
     # ---------- 任务队列 ----------

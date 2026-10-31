@@ -413,6 +413,52 @@ def graph(limit: int = Query(200, ge=10, le=2000)) -> dict[str, Any]:
     return db().graph(limit)
 
 
+class NodePatch(BaseModel):
+    name: Optional[str] = None
+    type: Optional[str] = None
+
+
+class EdgeIn(BaseModel):
+    src_type: str
+    src_id: int
+    dst_type: str
+    dst_id: int
+    rel: str = "related_to"
+
+
+@app.patch("/api/graph/nodes/{kind}/{node_id}")
+async def patch_node(kind: str, node_id: int, body: NodePatch) -> dict[str, Any]:
+    from ..graph_edit import rename_node
+
+    try:
+        return await run_in_threadpool(
+            lambda: rename_node(db(), kind, node_id, name=body.name, type_=body.type))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/graph/edges/{edge_id}")
+async def delete_graph_edge(edge_id: int) -> dict[str, Any]:
+    from ..graph_edit import remove_edge
+
+    try:
+        return await run_in_threadpool(lambda: remove_edge(db(), edge_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/graph/edges")
+async def add_graph_edge(body: EdgeIn) -> dict[str, Any]:
+    from ..graph_edit import create_edge
+
+    try:
+        return await run_in_threadpool(lambda: create_edge(
+            db(), src_type=body.src_type, src_id=body.src_id,
+            dst_type=body.dst_type, dst_id=body.dst_id, rel=body.rel))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/notes/{note_id}")
 def note(note_id: int) -> dict[str, Any]:
     with db().connect() as c:

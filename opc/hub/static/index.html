@@ -133,6 +133,36 @@
   #toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
   ::-webkit-scrollbar{width:8px;height:8px}
   ::-webkit-scrollbar-thumb{background:#20262f;border-radius:8px}
+
+  /* ---------- 图谱交互 ---------- */
+  #pane-graph{padding:0;position:relative;overflow:hidden}
+  #pane-graph canvas{position:absolute;inset:0;width:100%;height:100%;border-radius:0}
+  .gtools{position:absolute;top:10px;left:10px;display:flex;gap:3px;align-items:center;
+    background:rgba(16,19,24,.9);border:1px solid var(--line);border-radius:9px;padding:3px 5px;z-index:3}
+  .gtools button{border:0;background:none;color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:14px}
+  .gtools button:hover{background:#1a2230;color:var(--fg)}
+  .gtools .wide{width:auto;padding:0 8px;font-size:11.5px}
+  #gzoom{font:11px var(--mono);color:var(--faint);min-width:36px;text-align:center}
+  #gsearch{position:absolute;top:10px;right:10px;width:118px;background:rgba(16,19,24,.9);
+    border:1px solid var(--line);border-radius:8px;color:var(--fg);font-size:12px;padding:5px 9px;outline:0;z-index:3}
+  #gfilter{position:absolute;top:44px;right:10px;background:rgba(16,19,24,.9);border:1px solid var(--line);
+    color:var(--muted);border-radius:8px;font-size:11.5px;padding:4px 6px;z-index:3}
+  .gcard{position:absolute;left:10px;right:10px;bottom:10px;background:rgba(16,19,24,.95);
+    border:1px solid var(--line);border-radius:11px;padding:10px 12px;display:none;z-index:3}
+  .gcard.on{display:block}
+  .gcard .hd{display:flex;align-items:baseline;gap:8px}
+  .gcard .hd .n{font-weight:600;font-size:13.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .gcard .hd .t{font-size:10.5px;color:var(--faint);font-family:var(--mono)}
+  .gcard .mm{font-size:11.5px;color:var(--muted);margin-top:3px;max-height:34px;overflow:hidden}
+  .gcard .acts{display:flex;gap:6px;margin-top:8px}
+  .gcard .acts button{background:#1a2230;border:1px solid #2c4356;color:var(--accent);border-radius:7px;font-size:11.5px;padding:3px 9px;cursor:pointer}
+  .gcard .acts button:hover{border-color:var(--accent)}
+  .nbrow{display:flex;align-items:center;gap:8px;font-size:11.5px;color:#c4d2e2;padding:2px 0}
+  .nbrow span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .nbrow .cut{background:none;border:0;color:var(--faint);font-size:11px;cursor:pointer}
+  .nbrow .cut:hover{color:var(--bad)}
+  #gcNb{margin-top:6px;max-height:96px;overflow:auto}
+
   @media (max-width:640px){
     .hintline .opt{display:none}
     .hintline{font-size:11px}
@@ -179,7 +209,28 @@
     <button class="icon" id="drawerClose">×</button>
   </header>
   <div class="pane on" id="pane-conv"></div>
-  <div class="pane" id="pane-graph"><canvas id="canvas"></canvas></div>
+  <div class="pane" id="pane-graph">
+    <div class="gtools">
+      <button data-g="out" title="缩小">−</button>
+      <button data-g="in" title="放大">+</button>
+      <button class="wide" data-g="fit" title="适配窗口">适配</button>
+      <span id="gzoom">100%</span>
+    </div>
+    <canvas id="canvas"></canvas>
+    <input id="gsearch" placeholder="搜节点" />
+    <select id="gfilter">
+      <option value="">全部</option>
+      <option value="entity">实体</option>
+      <option value="concept">概念</option>
+      <option value="source">来源</option>
+    </select>
+    <div class="gcard" id="gcard">
+      <div class="hd"><span class="n" id="gcName"></span><span class="t" id="gcType"></span></div>
+      <div class="mm" id="gcMeta"></div>
+      <div class="acts" id="gcActs"></div>
+      <div id="gcNb"></div>
+    </div>
+  </div>
   <div class="pane" id="pane-sources"></div>
   <div class="pane" id="pane-tools"></div>
 </aside>
@@ -595,39 +646,49 @@ async function loadSources() {
   } catch {}
 }
 
-let sim = null;
+/* ---------------- 图谱：缩放 / 平移 / 聚焦 / 编辑 ---------------- */
+let G = null;
+const GCOLOR = (gr) => gr === "entity" ? "#5eead4" : gr === "concept" ? "#7aa2ff" : "#94a3b8";
+
 async function drawGraph() {
   const cv = $("#canvas");
+  if (!cv) return;
   const rect = cv.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
   const dpr = window.devicePixelRatio || 1;
-  cv.width = rect.width * dpr; cv.height = rect.height * dpr;
+  cv.width = rect.width * dpr;
+  cv.height = rect.height * dpr;
   const ctx = cv.getContext("2d");
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  let g;
-  try { g = await api("/api/graph?limit=120"); } catch { return; }
-  const W = rect.width, H = rect.height, pad = 24;
-  const deg = new Map();
-  for (const l of g.links) { deg.set(l.source, (deg.get(l.source) || 0) + 1); deg.set(l.target, (deg.get(l.target) || 0) + 1); }
-  let keep = g.nodes.filter((n) => (deg.get(n.id) || 0) > 0);
-  keep.sort((a, b) => (deg.get(b.id) || 0) - (deg.get(a.id) || 0));
-  keep = keep.slice(0, 90);
-  const rawIds = new Set(keep.map((n) => n.id));
-  const links = g.links.filter((l) => rawIds.has(l.source) && rawIds.has(l.target));
-  const R = Math.min(W, H) * 0.24;
-  const nodes = keep.map((n, i) => ({
-    ...n, degree: deg.get(n.id) || 0,
-    x: W / 2 + Math.cos((i / Math.max(keep.length, 1)) * 6.283) * R + (Math.random() - .5) * 6,
-    y: H / 2 + Math.sin((i / Math.max(keep.length, 1)) * 6.283) * R + (Math.random() - .5) * 6,
+  const W = rect.width, H = rect.height;
+
+  let data;
+  try { data = await api("/api/graph?limit=160"); } catch { return; }
+  const nodes = data.nodes.map((n, i) => ({
+    ...n,
+    x: W / 2 + Math.cos(i * 2.399) * Math.min(W, H) * 0.2 + (Math.random() - .5) * 8,
+    y: H / 2 + Math.sin(i * 2.399) * Math.min(W, H) * 0.2 + (Math.random() - .5) * 8,
     dx: 0, dy: 0,
   }));
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const color = (gr) => gr === "entity" ? "#5eead4" : gr === "concept" ? "#7aa2ff" : "#94a3b8";
-  const k = Math.sqrt((W * H) / Math.max(nodes.length, 1)) * 0.95;
-  let temp = Math.min(W, H) / 7, tick = 0;
+  const links = data.links.filter((l) => byId.has(l.source) && byId.has(l.target))
+    .map((l) => ({ ...l, a: byId.get(l.source), b: byId.get(l.target) }));
+  for (const n of nodes) n.degree = 0;
+  for (const l of links) { l.a.degree++; l.b.degree++; }
+  layoutGraph(nodes, links, W, H);
 
-  function frame() {
-    tick++;
+  G = { cv, ctx, dpr, W, H, nodes, links, byId, scale: 1, tx: 0, ty: 0,
+        selected: null, hover: null, armed: false, drag: null, pan: null, moved: false,
+        q: ($("#gsearch") && $("#gsearch").value || "").trim(),
+        filter: ($("#gfilter") && $("#gfilter").value) || "" };
+  fitGraph();
+  bindGraph();
+  drawGraphFrame();
+}
+
+function layoutGraph(nodes, links, W, H) {
+  const k = Math.sqrt((W * H) / Math.max(nodes.length, 1)) * 0.9;
+  let temp = Math.min(W, H) / 6;
+  for (let t = 0; t < 300; t++) {
     for (const n of nodes) { n.dx = 0; n.dy = 0; }
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
@@ -643,14 +704,12 @@ async function drawGraph() {
       }
     }
     for (const l of links) {
-      const a = byId.get(l.source), b = byId.get(l.target);
-      if (!a || !b) continue;
-      let dx = a.x - b.x, dy = a.y - b.y;
+      let dx = l.a.x - l.b.x, dy = l.a.y - l.b.y;
       const d = Math.hypot(dx, dy) || 0.01;
       const f = (d * d) / k * 0.9;
       dx /= d; dy /= d;
-      a.dx -= dx * f; a.dy -= dy * f;
-      b.dx += dx * f; b.dy += dy * f;
+      l.a.dx -= dx * f; l.a.dy -= dy * f;
+      l.b.dx += dx * f; l.b.dy += dy * f;
     }
     for (const n of nodes) {
       n.dx += (W / 2 - n.x) * 0.02;
@@ -659,39 +718,278 @@ async function drawGraph() {
       const step = Math.min(len, temp);
       n.x += (n.dx / len) * step;
       n.y += (n.dy / len) * step;
-      n.x = Math.max(pad, Math.min(W - pad, n.x));
-      n.y = Math.max(pad, Math.min(H - pad, n.y));
+      n.x = Math.max(20, Math.min(W - 20, n.x));
+      n.y = Math.max(20, Math.min(H - 20, n.y));
     }
-    temp *= 0.975;
-
-    ctx.clearRect(0, 0, W, H);
-    ctx.lineWidth = 1;
-    for (const l of links) {
-      const a = byId.get(l.source), b = byId.get(l.target);
-      ctx.strokeStyle = l.rel === "co_occurs" ? "rgba(94,234,212,.10)" : "rgba(122,162,255,.14)";
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-    }
-    for (const n of nodes) {
-      const r = n.group === "concept" ? 3.2 : n.group === "entity" ? 4.4 : 5;
-      ctx.beginPath(); ctx.arc(n.x, n.y, r + Math.min(2.5, n.degree / 14), 0, 7);
-      ctx.fillStyle = color(n.group); ctx.globalAlpha = .9; ctx.fill(); ctx.globalAlpha = 1;
-    }
-    for (const n of nodes) {
-      if (n.degree < 8) continue;
-      ctx.fillStyle = "rgba(226,236,248,.55)";
-      ctx.font = "9.5px -apple-system,Segoe UI,Microsoft YaHei,sans-serif";
-      ctx.fillText(String(n.label).slice(0, 12), n.x + 6, n.y + 3);
-    }
-    if (tick < 600 && temp > 0.7) sim = requestAnimationFrame(frame);
+    temp *= 0.97;
   }
-  cancelAnimationFrame(sim); frame();
-  cv.onclick = (e) => {
-    const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
-    let best = null, bd = 12;
-    for (const n of nodes) { const d = Math.hypot(n.x - x, n.y - y); if (d < bd) { bd = d; best = n; } }
-    if (best) sysLine(`${best.label}（${best.group} · 连接 ${best.degree}）`);
+}
+
+function fitGraph() {
+  if (!G || !G.nodes.length) return;
+  const xs = G.nodes.map((n) => n.x), ys = G.nodes.map((n) => n.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const bw = Math.max(maxX - minX, 40), bh = Math.max(maxY - minY, 40);
+  G.scale = Math.min(3, Math.max(0.3, Math.min(G.W / bw, G.H / bh) * 0.82));
+  G.tx = G.W / 2 - (minX + maxX) / 2 * G.scale;
+  G.ty = G.H / 2 - (minY + maxY) / 2 * G.scale;
+  drawGraphFrame();
+}
+
+const g2s = (x, y) => ({ x: x * G.scale + G.tx, y: y * G.scale + G.ty });
+const s2g = (x, y) => ({ x: (x - G.tx) / G.scale, y: (y - G.ty) / G.scale });
+
+function nodeAt(mx, my) {
+  if (!G) return null;
+  const p = s2g(mx, my);
+  let best = null, bd = 14 / G.scale;
+  for (const n of G.nodes) {
+    if (!visibleNode(n)) continue;
+    const d = Math.hypot(n.x - p.x, n.y - p.y);
+    if (d < bd) { bd = d; best = n; }
+  }
+  return best;
+}
+
+function visibleNode(n) {
+  if (!G) return false;
+  if (G.filter === "source") { if (n.group === "entity" || n.group === "concept") return false; }
+  else if (G.filter && n.group !== G.filter) return false;
+  if (G.q && !String(n.label).toLowerCase().includes(G.q.toLowerCase())) return false;
+  return true;
+}
+
+function neighborSet(n) {
+  const s = new Set([n.id]);
+  for (const l of G.links) {
+    if (l.a.id === n.id) s.add(l.b.id);
+    if (l.b.id === n.id) s.add(l.a.id);
+  }
+  return s;
+}
+
+function drawGraphFrame() {
+  if (!G) return;
+  const { ctx, W, H, dpr } = G;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const sel = G.selected;
+  const hood = sel ? neighborSet(sel) : null;
+
+  ctx.save();
+  ctx.translate(G.tx, G.ty);
+  ctx.scale(G.scale, G.scale);
+
+  for (const l of G.links) {
+    if (!visibleNode(l.a) || !visibleNode(l.b)) continue;
+    const hot = sel && (l.a.id === sel.id || l.b.id === sel.id);
+    ctx.strokeStyle = hot ? "rgba(94,234,212,.7)"
+      : (l.rel === "co_occurs" ? "rgba(94,234,212,.10)" : "rgba(122,162,255,.16)");
+    ctx.lineWidth = (hot ? 1.8 : 1) / G.scale;
+    ctx.beginPath(); ctx.moveTo(l.a.x, l.a.y); ctx.lineTo(l.b.x, l.b.y); ctx.stroke();
+  }
+
+  for (const n of G.nodes) {
+    if (!visibleNode(n)) continue;
+    const dim = hood && !hood.has(n.id);
+    const r = (n.group === "concept" ? 3.4 : n.group === "entity" ? 4.6 : 5.2)
+      + Math.min(3, (n.degree || 0) / 12);
+    ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 7);
+    ctx.fillStyle = GCOLOR(n.group);
+    ctx.globalAlpha = dim ? 0.25 : 0.95;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    if (n === sel) {
+      ctx.beginPath(); ctx.arc(n.x, n.y, r + 4, 0, 7);
+      ctx.strokeStyle = "rgba(94,234,212,.85)"; ctx.lineWidth = 1.5 / G.scale; ctx.stroke();
+    }
+  }
+
+  ctx.font = `${11 / G.scale}px -apple-system,Segoe UI,Microsoft YaHei,sans-serif`;
+  for (const n of G.nodes) {
+    if (!visibleNode(n)) continue;
+    const show = n === sel || n === G.hover || (n.degree || 0) >= 8 || (hood && hood.has(n.id));
+    if (!show) continue;
+    ctx.fillStyle = n === sel ? "#e9eff8" : "rgba(226,236,248,.62)";
+    ctx.fillText(String(n.label).slice(0, 16), n.x + 6 / G.scale, n.y + 3 / G.scale);
+  }
+  ctx.restore();
+  const z = $("#gzoom");
+  if (z) z.textContent = Math.round(G.scale * 100) + "%";
+}
+
+function bindGraph() {
+  const cv = G.cv;
+  cv.onwheel = (e) => {
+    e.preventDefault();
+    const r = cv.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const before = s2g(mx, my);
+    G.scale = Math.min(4, Math.max(0.25, G.scale * (e.deltaY < 0 ? 1.12 : 0.9)));
+    G.tx = mx - before.x * G.scale;
+    G.ty = my - before.y * G.scale;
+    drawGraphFrame();
+  };
+  cv.onmousedown = (e) => {
+    const r = cv.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const n = nodeAt(mx, my);
+    G.moved = false;
+    if (n) G.drag = { node: n, ox: n.x, oy: n.y, mx, my };
+    else G.pan = { tx: G.tx, ty: G.ty, mx, my };
+    cv.style.cursor = n ? "grabbing" : "grabbing";
+  };
+  cv.onmousemove = (e) => {
+    const r = cv.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    if (G.drag) {
+      const dx = (mx - G.drag.mx) / G.scale, dy = (my - G.drag.my) / G.scale;
+      G.drag.node.x = G.drag.ox + dx;
+      G.drag.node.y = G.drag.oy + dy;
+      if (Math.hypot(dx, dy) > 2) G.moved = true;
+      drawGraphFrame();
+      return;
+    }
+    if (G.pan) {
+      G.tx = G.pan.tx + (mx - G.pan.mx);
+      G.ty = G.pan.ty + (my - G.pan.my);
+      if (Math.abs(mx - G.pan.mx) + Math.abs(my - G.pan.my) > 2) G.moved = true;
+      drawGraphFrame();
+      return;
+    }
+    const n = nodeAt(mx, my);
+    if (n !== G.hover) {
+      G.hover = n;
+      cv.style.cursor = n ? "pointer" : "grab";
+      drawGraphFrame();
+    }
+  };
+  cv.onmouseup = (e) => {
+    const r = cv.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const moved = G.moved;
+    G.drag = null; G.pan = null; G.moved = false;
+    if (moved) { drawGraphFrame(); return; }
+    const hit = nodeAt(mx, my);
+    if (hit) {
+      if (G.armed && G.selected && hit.id !== G.selected.id) {
+        G.armed = false;
+        linkNodes(G.selected, hit);
+      } else {
+        selectNode(hit);
+      }
+    } else {
+      G.selected = null;
+      hideCard();
+      drawGraphFrame();
+    }
+  };
+  cv.onmouseleave = () => { G.hover = null; drawGraphFrame(); };
+  cv.ondblclick = async (e) => {
+    const r = cv.getBoundingClientRect();
+    const n = nodeAt(e.clientX - r.left, e.clientY - r.top);
+    if (n && n.path) {
+      try { const o = await api("/api/open?path=" + encodeURIComponent(n.path)); location.href = o.uri; }
+      catch (err) { toast("打开失败：" + err.message); }
+    }
   };
 }
+
+function selectNode(n) {
+  G.selected = n;
+  G.tx = G.W / 2 - n.x * G.scale;
+  G.ty = G.H / 2 - n.y * G.scale;
+  showCard(n);
+  drawGraphFrame();
+}
+
+function hideCard() { const c = $("#gcard"); if (c) c.classList.remove("on"); }
+
+function showCard(n) {
+  const card = $("#gcard");
+  if (!card) return;
+  card.classList.add("on");
+  $("#gcName").textContent = n.label;
+  $("#gcType").textContent = n.group + (n.type && n.type !== n.group ? " · " + n.type : "");
+  const rels = G.links.filter((l) => l.a.id === n.id || l.b.id === n.id);
+  $("#gcMeta").textContent = `${rels.length} 条关系` + (n.summary ? " · " + n.summary.slice(0, 70) : "");
+
+  const acts = $("#gcActs");
+  acts.innerHTML = "";
+  const addBtn = (label, fn) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.onclick = fn;
+    acts.appendChild(b);
+  };
+  if (n.path) addBtn("打开", () => openPath(n.path));
+  if (n.group === "entity" || n.group === "concept") {
+    addBtn("重命名", () => renameNode(n));
+    addBtn("连接…", () => { G.armed = true; toast("再点一个节点完成连线"); });
+  }
+
+  const nb = $("#gcNb");
+  nb.innerHTML = "";
+  for (const l of rels.slice(0, 10)) {
+    const other = l.a.id === n.id ? l.b : l.a;
+    const row = document.createElement("div");
+    row.className = "nbrow";
+    row.innerHTML = `<span>${esc(other.label)}</span><button class="cut" data-e="${l.id}">断开</button>`;
+    row.querySelector(".cut").onclick = (ev) => { ev.stopPropagation(); cutEdge(l.id); };
+    nb.appendChild(row);
+  }
+}
+
+async function openPath(path) {
+  try { const o = await api("/api/open?path=" + encodeURIComponent(path)); location.href = o.uri; }
+  catch (e) { toast("打开失败：" + e.message); }
+}
+
+async function renameNode(n) {
+  const name = prompt("新的名字", n.label);
+  if (!name || name.trim() === n.label) return;
+  try {
+    await api(`/api/graph/nodes/${n.group}/${n.ref}`, {
+      method: "PATCH", body: JSON.stringify({ name: name.trim() }),
+    });
+    toast("已重命名");
+    await drawGraph();
+  } catch (e) { toast("失败：" + e.message); }
+}
+
+async function linkNodes(a, b) {
+  if (a.group !== "entity" && a.group !== "concept") { toast("只能连接实体/概念"); return; }
+  if (b.group !== "entity" && b.group !== "concept") { toast("只能连接实体/概念"); return; }
+  try {
+    await api("/api/graph/edges", {
+      method: "POST",
+      body: JSON.stringify({ src_type: a.group, src_id: a.ref, dst_type: b.group, dst_id: b.ref }),
+    });
+    toast("已连线");
+    await drawGraph();
+  } catch (e) { toast("失败：" + e.message); }
+}
+
+async function cutEdge(edgeId) {
+  try {
+    await api("/api/graph/edges/" + edgeId, { method: "DELETE" });
+    toast("已断开");
+    await drawGraph();
+  } catch (e) { toast("失败：" + e.message); }
+}
+
+function bindGraphToolbar() {
+  const bind = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
+  bind('[data-g="in"]', () => { G.scale = Math.min(4, G.scale * 1.2); drawGraphFrame(); });
+  bind('[data-g="out"]', () => { G.scale = Math.max(0.25, G.scale / 1.2); drawGraphFrame(); });
+  bind('[data-g="fit"]', () => fitGraph());
+  const q = $("#gsearch");
+  if (q) q.oninput = () => { if (G) { G.q = q.value.trim(); drawGraphFrame(); } };
+  const f = $("#gfilter");
+  if (f) f.onchange = () => { if (G) { G.filter = f.value; drawGraphFrame(); } };
+}
+bindGraphToolbar();
 
 async function openPreview(c) {
   const modal = $("#modal");
