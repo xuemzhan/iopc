@@ -135,6 +135,9 @@
   ::-webkit-scrollbar-thumb{background:#20262f;border-radius:8px}
 
   /* ---------- 图谱交互 ---------- */
+  .drawer.graph{width:min(1080px,96vw)}
+  .drawer.graph.full{width:100vw;border-left:0}
+
   #pane-graph{padding:0;position:relative;overflow:hidden}
   #pane-graph canvas{position:absolute;inset:0;width:100%;height:100%;border-radius:0}
   .gtools{position:absolute;top:10px;left:10px;display:flex;gap:3px;align-items:center;
@@ -214,6 +217,7 @@
       <button data-g="out" title="缩小">−</button>
       <button data-g="in" title="放大">+</button>
       <button class="wide" data-g="fit" title="适配窗口">适配</button>
+      <button data-g="full" title="全屏">⛶</button>
       <span id="gzoom">100%</span>
     </div>
     <canvas id="canvas"></canvas>
@@ -600,6 +604,8 @@ function closeDrawer() { $("#drawer").classList.remove("open"); }
 function switchPane(name) {
   $$("#seg button").forEach((b) => b.classList.toggle("on", b.dataset.pane === name));
   $$(".pane").forEach((p) => p.classList.toggle("on", p.id === "pane-" + name));
+  $("#drawer").classList.toggle("graph", name === "graph");
+  if (name !== "graph") $("#drawer").classList.remove("full");
   if (name === "graph") setTimeout(drawGraph, 60);
   if (name === "sources") loadSources();
   if (name === "conv") loadConversations();
@@ -979,11 +985,28 @@ async function cutEdge(edgeId) {
   } catch (e) { toast("失败：" + e.message); }
 }
 
+function resizeGraph() {
+  if (!G) return;
+  const rect = G.cv.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  G.dpr = window.devicePixelRatio || 1;
+  G.cv.width = rect.width * G.dpr;
+  G.cv.height = rect.height * G.dpr;
+  G.W = rect.width;
+  G.H = rect.height;
+  fitGraph();
+}
+
 function bindGraphToolbar() {
   const bind = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
   bind('[data-g="in"]', () => { G.scale = Math.min(4, G.scale * 1.2); drawGraphFrame(); });
   bind('[data-g="out"]', () => { G.scale = Math.max(0.25, G.scale / 1.2); drawGraphFrame(); });
   bind('[data-g="fit"]', () => fitGraph());
+  bind('[data-g="full"]', () => {
+    const d = $("#drawer");
+    d.classList.toggle("full");
+    setTimeout(resizeGraph, 90);
+  });
   const q = $("#gsearch");
   if (q) q.oninput = () => { if (G) { G.q = q.value.trim(); drawGraphFrame(); } };
   const f = $("#gfilter");
