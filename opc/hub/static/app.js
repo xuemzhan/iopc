@@ -647,10 +647,23 @@ async function ask(question, { regenerate = false } = {}) {
     }
     const dd = state.doneData || {};
     state.trace = { ...state.trace, ...dd, hits: state.trace.hits, search_query: state.trace.search_query, expansions: state.trace.expansions, sensitive: state.trace.sensitive, masked: state.trace.masked };
+    const vecCites = state.cites.filter((c) => (c.channels || []).includes("vec"));
+    const dropped = Math.max(0, (state.vecHits || 0) - vecCites.length);
     const semChip = state.semantic
-      ? `<span class="sem-chip" title="本次检索命中向量通道">${icon("spark")}语义命中 ${state.vecHits || 0}</span>`
+      ? `<button class="sem-chip" data-vec title="点开看哪些片段来自向量召回">${icon("spark")}语义命中 ${vecCites.length}</button>`
       : "";
-    body.innerHTML = `<div class="md"></div>${citationsHtml(state.cites)}${semChip}${traceHtml(state.trace)}${actionsHtml()}`;
+    const vecList = semChip
+      ? `<div class="vec-list" hidden>${vecCites.map((c) =>
+          `<div class="vl-row"><b>[${c.n}]</b> ${esc(c.title)}</div>`).join("")}
+          ${dropped ? `<div class="vl-row" style="opacity:.65">另有 ${dropped} 条向量命中未进入引用（去重或长度上限）</div>` : ""}</div>`
+      : "";
+    body.innerHTML = `<div class="md"></div>${citationsHtml(state.cites)}${semChip}${vecList}${traceHtml(state.trace)}${actionsHtml()}`;
+    const vecBtn = $("[data-vec]", body);
+    if (vecBtn) vecBtn.onclick = () => {
+      const list = $(".vec-list", body);
+      list.hidden = !list.hidden;
+      vecBtn.classList.toggle("open", !list.hidden);
+    };
     $(".md", body).innerHTML = renderMarkdown(answer, state.cites);
     turn.__answer = answer;
     turn.__cites = state.cites;

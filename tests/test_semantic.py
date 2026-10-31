@@ -159,6 +159,9 @@ def test_prepare_ask_flags_semantic_hits(env, monkeypatch):
     prepared = prepare_ask("语义测试", database)
     assert prepared["semantic"] is True
     assert prepared["vec_hits"] == 1
+    assert prepared["citations"], "必须产生引用"
+    assert "vec" in (prepared["citations"][0].get("channels") or []), \
+        "引用要带召回通道，供 UI 展示明细"
 
 
 def test_prepare_ask_no_semantic_when_channel_absent(env, monkeypatch):

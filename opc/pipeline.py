@@ -510,6 +510,7 @@ def build_context(hits: list[dict[str, Any]], limit_chars: int = 9000) -> tuple[
             "note_id": h.get("id") if ctype == "note" else None,
             "source_id": h.get("id") if ctype == "chunk" else None,
             "kind": h.get("kind", "") or "",
+            "channels": h.get("channels", []) or [],
             "snippet": text[:240],
         })
         blocks.append(f"[{n}] 《{title}》\n{text}")
