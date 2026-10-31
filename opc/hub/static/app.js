@@ -442,6 +442,16 @@ function citationsHtml(cites) {
     </button>`).join("") + `</div>`;
 }
 
+function semanticHtml(cites, vecHits) {
+  const vec = (cites || []).filter((c) => (c.channels || []).includes("vec"));
+  const total = Math.max(vec.length, vecHits || 0);
+  if (!total) return "";
+  const dropped = Math.max(0, total - vec.length);
+  const rows = vec.map((c) => `<div class="vl-row"><b>[${c.n}]</b> ${esc(c.title)}</div>`).join("");
+  return `<button class="sem-chip" data-vec title="点开看哪些片段来自向量召回">${icon("spark")}语义命中 ${vec.length}</button>
+    <div class="vec-list" hidden>${rows}${dropped ? `<div class="vl-row" style="opacity:.65">另有 ${dropped} 条向量命中未进入引用（去重或长度上限）</div>` : ""}</div>`;
+}
+
 function traceHtml(t) {
   if (!t) return "";
   const tokens = t.usage && (t.usage.total_tokens || (t.usage.prompt_tokens || 0) + (t.usage.completion_tokens || 0));
@@ -647,23 +657,8 @@ async function ask(question, { regenerate = false } = {}) {
     }
     const dd = state.doneData || {};
     state.trace = { ...state.trace, ...dd, hits: state.trace.hits, search_query: state.trace.search_query, expansions: state.trace.expansions, sensitive: state.trace.sensitive, masked: state.trace.masked };
-    const vecCites = state.cites.filter((c) => (c.channels || []).includes("vec"));
-    const dropped = Math.max(0, (state.vecHits || 0) - vecCites.length);
-    const semChip = state.semantic
-      ? `<button class="sem-chip" data-vec title="点开看哪些片段来自向量召回">${icon("spark")}语义命中 ${vecCites.length}</button>`
-      : "";
-    const vecList = semChip
-      ? `<div class="vec-list" hidden>${vecCites.map((c) =>
-          `<div class="vl-row"><b>[${c.n}]</b> ${esc(c.title)}</div>`).join("")}
-          ${dropped ? `<div class="vl-row" style="opacity:.65">另有 ${dropped} 条向量命中未进入引用（去重或长度上限）</div>` : ""}</div>`
-      : "";
-    body.innerHTML = `<div class="md"></div>${citationsHtml(state.cites)}${semChip}${vecList}${traceHtml(state.trace)}${actionsHtml()}`;
-    const vecBtn = $("[data-vec]", body);
-    if (vecBtn) vecBtn.onclick = () => {
-      const list = $(".vec-list", body);
-      list.hidden = !list.hidden;
-      vecBtn.classList.toggle("open", !list.hidden);
-    };
+    const semBlock = semanticHtml(state.cites, state.vecHits);
+    body.innerHTML = `<div class="md"></div>${citationsHtml(state.cites)}${semBlock}${traceHtml(state.trace)}${actionsHtml()}`;
     $(".md", body).innerHTML = renderMarkdown(answer, state.cites);
     turn.__answer = answer;
     turn.__cites = state.cites;
@@ -1067,7 +1062,7 @@ async function openConversation(id) {
         const { turn, body } = addAI();
         turn.__answer = m.content;
         turn.__cites = m.citations || [];
-        body.innerHTML = `<div class="md"></div>${citationsHtml(turn.__cites)}`;
+        body.innerHTML = `<div class="md"></div>${citationsHtml(turn.__cites)}${semanticHtml(turn.__cites)}`;
         $(".md", body).innerHTML = renderMarkdown(m.content, turn.__cites);
         bindTurnActions(turn, { question: c.messages[c.messages.indexOf(m) - 1]?.content || "", answer: m.content, cites: turn.__cites });
       }
@@ -2473,6 +2468,15 @@ $("#paletteInput").addEventListener("keydown", (e) => {
 });
 $("#palette").addEventListener("click", (e) => { if (e.target.id === "palette") closePalette(); });
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeSheet(); });
+
+document.addEventListener("click", (e) => {
+  const chip = e.target.closest ? e.target.closest(".sem-chip") : null;
+  if (!chip) return;
+  const list = chip.parentElement.querySelector(".vec-list");
+  if (!list) return;
+  list.hidden = !list.hidden;
+  chip.classList.toggle("open", !list.hidden);
+});
 
 document.addEventListener("click", (e) => {
   const cite = e.target.closest ? e.target.closest("[data-cite]") : null;

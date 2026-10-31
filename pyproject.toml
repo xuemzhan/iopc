@@ -1,6 +1,6 @@
 [project]
 name = "opc"
-version = "0.10.2"
+version = "0.10.3"
 description = "OPC — 个人智能工具中枢：把看到、听到、学到的一切归集、提炼、建链。"
 requires-python = ">=3.11"
 dependencies = [

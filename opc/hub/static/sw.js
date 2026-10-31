@@ -2,11 +2,11 @@
 // - 导航请求 network-first（改完 UI 刷新即生效，离线回退缓存）
 // - 静态资源 stale-while-revalidate
 // - /api/* 永远走网络
-const CACHE = "opc-shell-v14";
+const CACHE = "opc-shell-v15";
 const SHELL = [
   "/",
-  "/static/app.css?v=0.9.11-1",
-  "/static/app.js?v=0.9.11-1",
+  "/static/app.css?v=0.10.3-1",
+  "/static/app.js?v=0.10.3-1",
   "/static/logo.svg",
   "/static/icon-192.png",
   "/static/icon-512.png",
