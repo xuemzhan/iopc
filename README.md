@@ -56,6 +56,8 @@ python -m opc repair --redistill
 python -m opc rebuild --from-vault
 ```
 
+> 环境变量 `OPC_DATA_DIR` / `OPC_VAULT_PATH` 可覆盖数据目录与知识库路径，便于用临时库做测试。
+
 ## 设计要点
 
 - **Markdown 优先**：SQLite 只是索引，删了可以 `opc rebuild --from-vault` 从 Obsidian 重建。
