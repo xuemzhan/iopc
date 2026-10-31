@@ -87,7 +87,9 @@ def search(database: "Database", query: str, limit: int = 8, *,
     channels: dict[str, list[dict[str, Any]]] = {"fts": [], "like": []}
     if use_alias:
         channels["alias"] = database._alias_hits(q, max(2, limit // 2))
-    if cfg().get("search.semantic", False):
+    from .semantic import enabled as _semantic_enabled
+
+    if _semantic_enabled():
         try:
             from .semantic import search as vec_search
 

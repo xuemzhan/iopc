@@ -90,3 +90,18 @@ def test_vector_channel_failure_degrades(senv, monkeypatch):
     from opc.retrieval import search as hybrid_search
 
     assert hybrid_search(database, "任意查询", limit=5) == [], "语义失败不影响字面检索"
+
+
+def test_semantic_enabled_honours_both_keys(monkeypatch):
+    import opc.config as config_mod
+    from opc.config import Config
+    from opc.semantic import enabled
+
+    monkeypatch.setattr(config_mod, "_cfg", Config({"search": {"semantic": True}}))
+    assert enabled() is True
+
+    monkeypatch.setattr(config_mod, "_cfg", Config({"search": {"embeddings": True}}))
+    assert enabled() is True, "旧键 search.embeddings 必须继续生效"
+
+    monkeypatch.setattr(config_mod, "_cfg", Config({"search": {}}))
+    assert enabled() is False

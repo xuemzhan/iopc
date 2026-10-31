@@ -264,7 +264,7 @@ scheduler.Watcher（随 hub 启动的守护线程，默认 90s 一轮）
 - [x] 38 个单元测试
 
 下一步（按价值排序）
-1. **语义检索**：Ollama + bge-m3 嵌入，`embeddings` 表 + 与 RRF 融合（`search()` 已是唯一入口）。
+1. **语义检索（已落地，默认关）**：`opc embed` 走 `llm("embed")`（默认智谱 `embedding-3`），向量存 `embeddings` 表，查询时作为 RRF 第四通道；开关是 `[search].semantic`。
 2. **浏览器/系统级捕获**：Web Clipper、截图 OCR、系统音频回环。
 3. **矛盾自动落笔**：`lint --apply` 已能写 `> [!warning]`，下一步让值守默认执行并去重。
 4. **会议中途快照**：录制中按 N 分钟做阶段性入库（默认关，避免 token 消耗）。

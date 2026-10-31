@@ -45,6 +45,13 @@ def _note_rows(database: Database, limit: int | None = None) -> list[dict[str, A
         return [dict(r) for r in c.execute(sql).fetchall()]
 
 
+def enabled() -> bool:
+    """语义通道是否开启：优先 search.semantic，兼容旧键 search.embeddings。"""
+    from .config import cfg
+
+    return bool(cfg().get("search.semantic", cfg().get("search.embeddings", False)))
+
+
 def index_pending(database: Database | None = None, *, limit: int | None = None,
                   rebuild: bool = False, batch: int = 16) -> dict[str, Any]:
     """给缺失向量的笔记补 embedding；`rebuild=True` 时全部重嵌。"""
