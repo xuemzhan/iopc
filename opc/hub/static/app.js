@@ -613,6 +613,8 @@ async function ask(question, { regenerate = false } = {}) {
           body.innerHTML = `<span class="typing"><span class="spin"></span>${esc(ev.text || "处理中")}</span>`;
         } else if (ev.type === "citations") {
           state.cites = ev.citations || [];
+          state.semantic = !!ev.semantic;
+          state.vecHits = ev.vec_hits || 0;
           state.trace = { ...ev };
           turn.__cites = state.cites;
           $("#stopText").textContent = `已检索 ${ev.hits || state.cites.length} 段，正在生成…`;
@@ -645,7 +647,10 @@ async function ask(question, { regenerate = false } = {}) {
     }
     const dd = state.doneData || {};
     state.trace = { ...state.trace, ...dd, hits: state.trace.hits, search_query: state.trace.search_query, expansions: state.trace.expansions, sensitive: state.trace.sensitive, masked: state.trace.masked };
-    body.innerHTML = `<div class="md"></div>${citationsHtml(state.cites)}${traceHtml(state.trace)}${actionsHtml()}`;
+    const semChip = state.semantic
+      ? `<span class="sem-chip" title="本次检索命中向量通道">${icon("spark")}语义命中 ${state.vecHits || 0}</span>`
+      : "";
+    body.innerHTML = `<div class="md"></div>${citationsHtml(state.cites)}${semChip}${traceHtml(state.trace)}${actionsHtml()}`;
     $(".md", body).innerHTML = renderMarkdown(answer, state.cites);
     turn.__answer = answer;
     turn.__cites = state.cites;
@@ -2168,6 +2173,7 @@ async function openSettings(refresh = false) {
     <div class="setting-row"><div class="sr-main"><div class="sr-title">建索引</div>
       <div class="sr-sub" id="semHint">${sem ? (sem.ready ? (sem.pending ? `还有 ${sem.pending} 条待嵌入` : "全部已嵌入") : `不可用：${esc(sem.hint)}`) : ""}</div></div>
       <button class="btn ghost" id="semIndex" ${sem && sem.ready ? "" : "disabled"}>开始</button></div>
+    <div class="bar" id="semBar" hidden><span style="width:0%"></span></div>
     <div class="section-label">连接器</div>
     <div>${tools || `<div class="empty">读取失败</div>`}</div>
     <div class="section-label">使用观察（近 7 天 · 只存事件名与计数）</div>
@@ -2200,11 +2206,15 @@ async function openSettings(refresh = false) {
     try {
       const r = await api("/api/semantic/index", { method: "POST", body: JSON.stringify({ limit: 0 }) });
       const jobId = r.job_id;
+      const bar = $("#semBar", sheet);
+      bar.hidden = false;
       for (let i = 0; i < 300; i++) {
         await new Promise((res) => setTimeout(res, 1200));
         const job = await api("/api/jobs/" + jobId);
+        bar.querySelector("span").style.width = `${Math.max(2, job.progress || 0)}%`;
         hint.textContent = `${job.stage || "排队中"} · ${job.progress || 0}%`;
         if (job.status === "done" || job.status === "failed") {
+          bar.hidden = job.status === "done";
           if (job.status === "done") {
             hint.textContent = `完成：新嵌 ${job.result?.embedded || 0}，总数 ${job.result?.total_vectors || 0}`;
             toast("语义索引已更新");

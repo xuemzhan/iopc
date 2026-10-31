@@ -647,12 +647,14 @@ def prepare_ask(question: str, database: Database | None = None,
         hits = database.search(search_q, limit=6)
     if not hits and search_q != question:
         hits = database.search(question, limit=6)
+    vec_hits = sum(1 for h in hits if "vec" in (h.get("channels") or []))
+    semantic_meta = {"semantic": vec_hits > 0, "vec_hits": vec_hits}
     if scope:
         hits = _scope_hits(database, hits, scope)
     if not hits:
         return {"messages": [], "citations": [], "empty": True, "expansions": expansions,
                 "search_query": search_q, "hits": 0, "sensitive": sensitive,
-                "masked": state is not None,
+                "masked": state is not None, **semantic_meta,
                 "mask_map": state["mapping"] if state else {}}
     with database.connect() as c:
         for h in hits:
@@ -682,7 +684,7 @@ def prepare_ask(question: str, database: Database | None = None,
     return {"messages": messages, "citations": cites, "empty": False,
             "expansions": expansions, "search_query": search_q, "hits": len(cites),
             "sensitive": sensitive, "masked": state is not None,
-            "mask_map": mask_map}
+            "mask_map": mask_map, **semantic_meta}
 
 
 def ask(question: str, *, save: bool = False, database: Database | None = None,
@@ -692,7 +694,8 @@ def ask(question: str, *, save: bool = False, database: Database | None = None,
     prepared = prepare_ask(question, database, history=history, scope=scope)
     if prepared["empty"]:
         return {"answer": "知识库里还没有相关内容。先用 /capture 记一条，或 /meeting 导入一场会议。",
-                "citations": [], "saved": None, "expansions": prepared.get("expansions", [])}
+                "citations": [], "saved": None, "expansions": prepared.get("expansions", []),
+                "semantic": False, "vec_hits": 0}
     cites = prepared["citations"]
     with llm_attribution(llm("ask"), sensitive=bool(prepared.get("sensitive"))):
         answer = llm("ask").chat(prepared["messages"], max_tokens=1800)
@@ -705,7 +708,9 @@ def ask(question: str, *, save: bool = False, database: Database | None = None,
                            "q_fp": hashlib.sha1(question.encode("utf-8")).hexdigest()[:8],
                            "hits": len(cites)})
     return {"answer": answer, "citations": cites, "saved": saved,
-            "expansions": prepared.get("expansions", [])}
+            "expansions": prepared.get("expansions", []),
+            "semantic": prepared.get("semantic", False),
+            "vec_hits": prepared.get("vec_hits", 0)}
 
 
 def save_synthetic(question: str, answer: str, cites: list[dict[str, Any]],

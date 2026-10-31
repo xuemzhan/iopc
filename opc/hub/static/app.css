@@ -435,3 +435,7 @@ main.stage{flex:1;display:flex;flex-direction:column;min-height:0;align-items:ce
 .cand-pair .arrow{color:var(--faint)}
 .cand-score{margin-left:auto;font-size:11px;color:var(--accent);font-variant-numeric:tabular-nums}
 
+.sem-chip{display:inline-flex;align-items:center;gap:4px;margin-top:8px;margin-left:6px;
+  font-size:11px;color:var(--accent);background:rgba(94,234,212,.08);
+  border:1px solid rgba(94,234,212,.25);border-radius:99px;padding:1px 8px}
+.sem-chip .i{width:11px;height:11px}

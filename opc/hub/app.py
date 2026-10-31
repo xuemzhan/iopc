@@ -702,6 +702,8 @@ async def _stream_ask(question: str, save: bool, history: list[dict[str, Any]],
                    "search_query": prepared.get("search_query", question),
                    "hits": prepared.get("hits", len(cites)),
                    "sensitive": prepared.get("sensitive", False),
+                   "semantic": prepared.get("semantic", False),
+                   "vec_hits": prepared.get("vec_hits", 0),
                    "masked": masked})
         buf: list[str] = []
         first_token_ms: int | None = None
@@ -754,6 +756,8 @@ async def _stream_ask(question: str, save: bool, history: list[dict[str, Any]],
             usage = dict(getattr(llm_obj, "last_usage", {}) or {})
             yield sse({
                 "type": "done", "citations": cites, "saved": saved,
+                "semantic": prepared.get("semantic", False),
+                "vec_hits": prepared.get("vec_hits", 0),
                 "model": getattr(llm_obj, "model", ""),
                 "usage": usage,
                 "latency_ms": round((time.perf_counter() - started) * 1000),

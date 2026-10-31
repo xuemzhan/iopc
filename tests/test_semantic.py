@@ -139,3 +139,39 @@ def test_set_semantic_inserts_when_missing(tmp_path, monkeypatch):
     text = cfgfile.read_text(encoding="utf-8")
     assert "semantic = true" in text
     assert text.index("semantic = true") < text.index("[watch]")
+
+
+def test_prepare_ask_flags_semantic_hits(env, monkeypatch):
+    import opc.retrieval as retrieval
+    from opc.pipeline import prepare_ask
+
+    cfg, database, vault = env
+    nid = database.put_note(source_id=None, kind="source", title="语义测试笔记",
+                            slug="sem-test", path="wiki/sem-test.md", summary="摘要",
+                            body_md="正文", tags=[], status="published", model="stub")
+    assert nid
+
+    def fake_search(*args, **kwargs):
+        return [{"type": "note", "id": nid, "title": "语义测试笔记",
+                 "snippet": "正文", "channels": ["vec", "fts"]}]
+
+    monkeypatch.setattr(retrieval, "search", fake_search)
+    prepared = prepare_ask("语义测试", database)
+    assert prepared["semantic"] is True
+    assert prepared["vec_hits"] == 1
+
+
+def test_prepare_ask_no_semantic_when_channel_absent(env, monkeypatch):
+    import opc.retrieval as retrieval
+    from opc.pipeline import prepare_ask
+
+    cfg, database, vault = env
+    nid = database.put_note(source_id=None, kind="source", title="字面测试笔记",
+                            slug="lit-test", path="wiki/lit-test.md", summary="摘要",
+                            body_md="正文", tags=[], status="published", model="stub")
+
+    monkeypatch.setattr(retrieval, "search", lambda *a, **k: [
+        {"type": "note", "id": nid, "title": "字面测试笔记", "snippet": "正文", "channels": ["fts"]}])
+    prepared = prepare_ask("字面测试", database)
+    assert prepared["semantic"] is False
+    assert prepared["vec_hits"] == 0
