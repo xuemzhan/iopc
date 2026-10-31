@@ -1189,6 +1189,41 @@ async def delete_graph_edge(edge_id: int) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+class SemanticToggleIn(BaseModel):
+    enabled: bool
+
+
+class SemanticIndexIn(BaseModel):
+    limit: int = 0
+    rebuild: bool = False
+
+
+@app.get("/api/semantic/status")
+async def semantic_status() -> dict[str, Any]:
+    from ..settings import status as sem_status
+
+    return await run_in_threadpool(sem_status)
+
+
+@app.post("/api/semantic/toggle")
+async def semantic_toggle(body: SemanticToggleIn) -> dict[str, Any]:
+    from ..settings import set_semantic
+
+    try:
+        return await run_in_threadpool(lambda: set_semantic(body.enabled))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/semantic/index")
+def semantic_index(body: SemanticIndexIn) -> dict[str, Any]:
+    if not body.limit and not body.rebuild:
+        body.limit = 0
+    job_id = db().enqueue("embed", {"limit": body.limit, "rebuild": body.rebuild},
+                          priority=5)
+    return {"job_id": job_id}
+
+
 @app.get("/api/graph/edits")
 def graph_edits(limit: int = 20) -> dict[str, Any]:
     from ..graph_edit import list_edits

@@ -53,7 +53,8 @@ def enabled() -> bool:
 
 
 def index_pending(database: Database | None = None, *, limit: int | None = None,
-                  rebuild: bool = False, batch: int = 16) -> dict[str, Any]:
+                  rebuild: bool = False, batch: int = 16,
+                  on_progress=None) -> dict[str, Any]:
     """给缺失向量的笔记补 embedding；`rebuild=True` 时全部重嵌。"""
     database = database or db()
     model = llm("embed").model
@@ -70,6 +71,9 @@ def index_pending(database: Database | None = None, *, limit: int | None = None,
         for r, vec in zip(chunk, vectors):
             database.put_embedding("note", int(r["id"]), model, vec)
             embedded += 1
+        if on_progress:
+            pct = int(embedded / max(len(todo), 1) * 100)
+            on_progress(pct, f"已嵌入 {embedded}/{len(todo)}")
     total = len(database.embedding_ids(model))
     return {"model": model, "scanned": len(rows), "pending": len(todo),
             "embedded": embedded, "total_vectors": total, "rebuild": rebuild}

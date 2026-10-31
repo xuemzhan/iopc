@@ -202,6 +202,16 @@ def run_worker(once: bool = False, max_jobs: int = 100, database: Database | Non
                 progress(15, "抓取网页")
                 result = conn.ingest(payload["url"],  # type: ignore[attr-defined]
                                      publish=payload.get("publish", True))
+            elif job["kind"] == "embed":
+                from .semantic import index_pending
+
+                progress(5, "统计待嵌入笔记")
+                result = index_pending(
+                    database,
+                    limit=payload.get("limit") or None,
+                    rebuild=bool(payload.get("rebuild")),
+                    on_progress=progress,
+                )
             elif job["kind"] == "voice":
                 from .voice import transcribe_and_capture
 

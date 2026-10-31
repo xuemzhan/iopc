@@ -105,3 +105,37 @@ def test_semantic_enabled_honours_both_keys(monkeypatch):
 
     monkeypatch.setattr(config_mod, "_cfg", Config({"search": {}}))
     assert enabled() is False
+
+
+def test_set_semantic_rewrites_config_line(tmp_path, monkeypatch):
+    import opc.settings as settings
+
+    cfgfile = tmp_path / "opc.toml"
+    cfgfile.write_text("[search]\nsemantic = false\nrrf = true\n", encoding="utf-8")
+    monkeypatch.setattr(settings, "CONFIG_PATH", cfgfile)
+    monkeypatch.setattr(settings, "reset_config", lambda: None)
+    monkeypatch.setattr(settings, "status", lambda: {"enabled": True})
+
+    settings.set_semantic(True)
+    text = cfgfile.read_text(encoding="utf-8")
+    assert text.count("semantic =") == 1
+    assert "semantic = true" in text
+    assert "rrf = true" in text, "其它配置必须保留"
+
+    settings.set_semantic(False)
+    assert "semantic = false" in cfgfile.read_text(encoding="utf-8")
+
+
+def test_set_semantic_inserts_when_missing(tmp_path, monkeypatch):
+    import opc.settings as settings
+
+    cfgfile = tmp_path / "opc.toml"
+    cfgfile.write_text("[search]\nrrf = true\n\n[watch]\n", encoding="utf-8")
+    monkeypatch.setattr(settings, "CONFIG_PATH", cfgfile)
+    monkeypatch.setattr(settings, "reset_config", lambda: None)
+    monkeypatch.setattr(settings, "status", lambda: {"enabled": True})
+
+    settings.set_semantic(True)
+    text = cfgfile.read_text(encoding="utf-8")
+    assert "semantic = true" in text
+    assert text.index("semantic = true") < text.index("[watch]")

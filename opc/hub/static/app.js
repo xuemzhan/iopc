@@ -2131,13 +2131,15 @@ async function openSettings(refresh = false) {
     body: `<div class="empty"><span class="spin"></span> 读取连接器（首次约 2 秒）…</div>`,
     foot: [{ label: "关闭", fn: closeSheet }],
   });
-  const [statusRes, summaryRes, pulseRes] = await Promise.allSettled([
+  const [statusRes, summaryRes, pulseRes, semRes] = await Promise.allSettled([
     api(`/api/status?refresh=${refresh}`, { timeout: 40000 }),
     api("/api/telemetry/summary?days=7"),
     api("/api/pulse"),
+    api("/api/semantic/status"),
   ]);
   const st = statusRes.status === "fulfilled" ? statusRes.value : { tools: [], stats: {} };
   const sum = summaryRes.status === "fulfilled" ? summaryRes.value : null;
+  const sem = semRes.status === "fulfilled" ? semRes.value : null;
   if (pulseRes.status === "fulfilled") S.pulse = pulseRes.value;
   S.tools = st.tools || [];
   S.telemetrySummary = sum;
@@ -2159,6 +2161,13 @@ async function openSettings(refresh = false) {
     <div class="kv"><span>待处理</span><b>${(S.pulse?.attention_total || 0)}</b></div>
     <div class="kv"><span>今日 tokens / 预算</span><b>${budget.used || 0} / ${budget.max ? budget.max : "未设上限"}${budget.exhausted ? "（已用尽，批量任务暂停）" : ""}</b></div>
     <div class="kv"><span>答案反馈（近 7 天）</span><b>👍 ${feedback.up || 0} · 👎 ${feedback.down || 0}</b></div>
+    <div class="section-label">语义检索</div>
+    <div class="setting-row"><div class="sr-main"><div class="sr-title">向量召回（RRF 第四通道）</div>
+      <div class="sr-sub" id="semSub">${sem ? `${esc(sem.model)} · ${sem.vectors}/${sem.notes} 条已嵌入` : "状态读取失败"}</div></div>
+      <button class="switch ${sem && sem.enabled ? "on" : ""}" id="semSwitch" aria-label="语义检索开关"></button></div>
+    <div class="setting-row"><div class="sr-main"><div class="sr-title">建索引</div>
+      <div class="sr-sub" id="semHint">${sem ? (sem.ready ? (sem.pending ? `还有 ${sem.pending} 条待嵌入` : "全部已嵌入") : `不可用：${esc(sem.hint)}`) : ""}</div></div>
+      <button class="btn ghost" id="semIndex" ${sem && sem.ready ? "" : "disabled"}>开始</button></div>
     <div class="section-label">连接器</div>
     <div>${tools || `<div class="empty">读取失败</div>`}</div>
     <div class="section-label">使用观察（近 7 天 · 只存事件名与计数）</div>
@@ -2172,6 +2181,41 @@ async function openSettings(refresh = false) {
     <div class="kv"><span>模型</span><b>${esc(S.pulse?.llm || "")}</b></div>
     <div class="kv"><span>访问令牌</span><b>${getToken() ? "已保存（本机）" : "未设置 / 本机免令牌"}</b></div>
     <div class="kv"><span>API 文档</span><a href="/api/docs" target="_blank" rel="noopener">/api/docs</a></div>`;
+  const semSwitch = $("#semSwitch", sheet);
+  if (semSwitch) semSwitch.onclick = async () => {
+    const on = !semSwitch.classList.contains("on");
+    semSwitch.classList.toggle("on", on);
+    try {
+      const r = await api("/api/semantic/toggle", { method: "POST", body: JSON.stringify({ enabled: on }) });
+      $("#semSub", sheet).textContent = `${r.model} · ${r.vectors}/${r.notes} 条已嵌入`;
+      toast(on ? "语义检索已开启" : "语义检索已关闭");
+    } catch (e) {
+      semSwitch.classList.toggle("on", !on);
+      toast("切换失败：" + e.message);
+    }
+  };
+  const semIndex = $("#semIndex", sheet);
+  if (semIndex) semIndex.onclick = async () => {
+    const hint = $("#semHint", sheet);
+    try {
+      const r = await api("/api/semantic/index", { method: "POST", body: JSON.stringify({ limit: 0 }) });
+      const jobId = r.job_id;
+      for (let i = 0; i < 300; i++) {
+        await new Promise((res) => setTimeout(res, 1200));
+        const job = await api("/api/jobs/" + jobId);
+        hint.textContent = `${job.stage || "排队中"} · ${job.progress || 0}%`;
+        if (job.status === "done" || job.status === "failed") {
+          if (job.status === "done") {
+            hint.textContent = `完成：新嵌 ${job.result?.embedded || 0}，总数 ${job.result?.total_vectors || 0}`;
+            toast("语义索引已更新");
+          } else {
+            hint.textContent = "失败：" + (job.error || "未知错误");
+          }
+          break;
+        }
+      }
+    } catch (e) { hint.textContent = "失败：" + e.message; }
+  };
   $("#trackSwitch", sheet).onclick = () => {
     const on = !trackOn();
     localStorage.setItem(TRACK_KEY, on ? "1" : "0");

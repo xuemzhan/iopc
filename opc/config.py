@@ -99,3 +99,9 @@ def cfg() -> Config:
     if _cfg is None:
         _cfg = load_config()
     return _cfg
+
+
+def reset_config() -> None:
+    """丢掉缓存，下次 cfg() 重新读文件（UI 改开关后立即生效）。"""
+    global _cfg
+    _cfg = None
