@@ -393,6 +393,45 @@ def test_add_edge_weight_is_source_count(env):
     assert w == 2.0, "不同来源应把 weight 加成来源数"
 
 
+def test_add_edge_weight_survives_alternating_sources(env):
+    """A→B→A 交替重跑不得把 weight 叠成执行次数（I7）。"""
+    cfg, database, _ = env
+    seen: set[int] = set()
+    for sid in (1, 2, 1, 2, 1):
+        seen.add(sid)
+        database.add_edge("entity", 1, "entity", 2, "co_occurs", weight=1.0, source_id=sid)
+        with database.connect() as c:
+            w = c.execute("SELECT weight FROM edges WHERE rel='co_occurs'").fetchone()[0]
+        assert w == float(len(seen)), f"来源集合 {seen} 时 weight 应为 {len(seen)}，实际 {w}"
+    database.add_edge("entity", 1, "entity", 2, "co_occurs", weight=1.0, source_id=3)
+    with database.connect() as c:
+        w = c.execute("SELECT weight FROM edges WHERE rel='co_occurs'").fetchone()[0]
+    assert w == 3.0
+
+
+def test_scalar_edge_keeps_declared_weight(env):
+    """不按来源计数的边（related_to/distills）保持声明权重，且重跑幂等。"""
+    cfg, database, _ = env
+    database.add_edge("concept", 1, "entity", 2, "related_to", weight=0.7)
+    database.add_edge("concept", 1, "entity", 2, "related_to", weight=0.7)
+    with database.connect() as c:
+        rows = c.execute("SELECT weight, source_id FROM edges WHERE rel='related_to'").fetchall()
+    assert len(rows) == 1 and rows[0]["weight"] == 0.7 and rows[0]["source_id"] is None
+
+
+def test_related_to_weight_stays_prior_across_sources(env):
+    """related_to 是标量边：跨来源重复提炼也不涨权（0.7 先验），来源只作溯源。"""
+    cfg, database, _ = env
+    for sid in (1, 2, 1, 3):
+        database.add_edge("concept", 1, "entity", 2, "related_to", weight=0.7, source_id=sid)
+    with database.connect() as c:
+        rows = c.execute("SELECT weight, source_id FROM edges WHERE rel='related_to'").fetchall()
+        es = c.execute("SELECT COUNT(*) FROM edge_sources").fetchone()[0]
+    assert len(rows) == 1 and rows[0]["weight"] == 0.7
+    assert rows[0]["source_id"] == 1, "首个来源作为溯源，不被后来者覆盖"
+    assert es == 0, "标量边不进来源集合"
+
+
 def test_distill_is_idempotent_for_edges(env, monkeypatch):
     """同一来源连跑三次 distill：边数与各边 weight 必须完全不变。"""
     cfg, database, _ = env

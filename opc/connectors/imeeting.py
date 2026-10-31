@@ -55,8 +55,8 @@ class IMeetingConnector(Connector):
             r.raise_for_status()
             return r.json()
 
-    def list_meetings(self, limit: int = 20) -> list[dict[str, Any]]:
-        data = self._get(f"/meetings?limit={int(limit)}")
+    def list_meetings(self, limit: int = 20, timeout: float = 30.0) -> list[dict[str, Any]]:
+        data = self._get(f"/meetings?limit={int(limit)}", timeout=timeout)
         if isinstance(data, dict):
             for k in ("items", "meetings", "data"):
                 if isinstance(data.get(k), list):
@@ -64,8 +64,8 @@ class IMeetingConnector(Connector):
             return []
         return data or []
 
-    def meeting(self, meeting_id: int) -> dict[str, Any]:
-        return self._get(f"/meetings/{meeting_id}")
+    def meeting(self, meeting_id: int, timeout: float = 30.0) -> dict[str, Any]:
+        return self._get(f"/meetings/{meeting_id}", timeout=timeout)
 
     def minutes(self, meeting_id: int) -> dict[str, Any] | None:
         try:
@@ -132,6 +132,10 @@ class IMeetingConnector(Connector):
             lines.append("")
 
         segs = m.get("segments") or []
+        interrupted = str(m.get("status", "")).lower() == "abandoned"
+        if interrupted:
+            lines += ["", "> [!warning] 本场录制异常中断（iMeeting 标记 abandoned），"
+                          "已收转写照常入库；注记与时间戳仍按录制时的相对时刻对齐。", ""]
         if segs:
             lines.append("## 会议转写")
             for s in segs:
@@ -159,11 +163,24 @@ class IMeetingConnector(Connector):
                 "meeting_type": m.get("meeting_type"),
                 "topics": len(mins.get("topics", [])) if mins else 0,
                 "mindmap_version": mm.get("version") if mm else None,
+                "status": m.get("status"),
+                "interrupted": interrupted,
             },
         }
 
     def ingest(self, meeting_id: int, publish: bool | None = None, force: bool = False) -> dict[str, Any]:
         r = self.render(meeting_id)
+        # P0-F：开会时的随手注记（疑问/回应/重点）并进会议正文，随提炼进入知识页
+        try:
+            from ..annotate import render_for_meeting
+            from ..db import db
+
+            block = render_for_meeting(db(), meeting_id)
+            if block:
+                r["text"] = f"{r['text']}\n\n{block}".strip()
+                r["meta"]["annotations"] = True
+        except Exception:
+            pass  # 注记注入失败不影响会议入库本身
         return capture(
             kind="meeting",
             external_id=str(meeting_id),

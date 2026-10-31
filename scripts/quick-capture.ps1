@@ -1,8 +1,15 @@
-# OPC 速记窗：Ctrl+Alt+O 唤起，写完回车即入库（后台自动提炼）
+﻿# OPC 速记窗：Ctrl+Alt+O 唤起，写完回车即入库（后台自动提炼）
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $ErrorActionPreference = "Stop"
 [System.Windows.Forms.Application]::EnableVisualStyles()
+
+# vbs 用 shell.Run(...,0) 启动时进程带 SW_HIDE，窗体可能被判为隐藏，显式 SW_SHOW 一次
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class OpcWin { [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow); }
+"@
 
 $hub = "http://127.0.0.1:5370"
 
@@ -108,5 +115,5 @@ $box.Add_KeyDown({
         if ($_.KeyCode -eq "Escape") { $form.Close() }
     })
 
-$form.Add_Shown({ $box.Focus() })
+$form.Add_Shown({ try { [void][OpcWin]::ShowWindow($form.Handle, 5) } catch { }; $box.Focus() })
 [void]$form.ShowDialog()

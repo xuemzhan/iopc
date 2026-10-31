@@ -16,7 +16,7 @@ def scan(database: Database | None = None) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     with database.connect() as c:
         for kind, table in (("entity", "entities"), ("concept", "concepts")):
-            for r in c.execute(f"SELECT id, name, page_path FROM {table}").fetchall():
+            for r in c.execute(f"SELECT id, name, page_path FROM {table} WHERE locked=0").fetchall():
                 if not valid_name(r["name"]):
                     out.append({"kind": kind, "id": int(r["id"]), "name": r["name"],
                                 "path": r["page_path"] or ""})
@@ -42,6 +42,12 @@ def prune(apply: bool = False, database: Database | None = None) -> dict[str, An
             continue
         table = "entities" if it["kind"] == "entity" else "concepts"
         with database.tx() as c:
+            c.execute(
+                "DELETE FROM edge_sources WHERE edge_id IN ("
+                " SELECT id FROM edges WHERE (src_type=? AND src_id=?)"
+                " OR (dst_type=? AND dst_id=?))",
+                (it["kind"], it["id"], it["kind"], it["id"]),
+            )
             c.execute("DELETE FROM edges WHERE (src_type=? AND src_id=?) OR (dst_type=? AND dst_id=?)",
                       (it["kind"], it["id"], it["kind"], it["id"]))
             c.execute(f"DELETE FROM {table} WHERE id=?", (it["id"],))

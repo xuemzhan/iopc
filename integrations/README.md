@@ -55,6 +55,14 @@ MCP 服务器不需要常驻，客户端会按需拉起 `python -m opc.mcp_serve
 | `opc_tools` | 工具栈状态 |
 | `opc_synthesize` | 跨来源综述一个主题 |
 | `opc_graph` | 取图谱节点与边 |
+| `opc_ontology_status` | 本体状态：类型分布/待审数/候选 |
+| `opc_ontology_merge` | 归并两个实体（A 保留、B 并入） |
+| `opc_ontology_review` | 实体确认 / 退场 |
+| `opc_note` | 随手注记（带当前锚点，不触发 LLM） |
+| `opc_notes` | 列出注记（recent/focused/…） |
+| `opc_graph_edit` | 图谱改名 / 连线 / 断线（可撤销） |
+
+在本机运行 `python -m opc mcp` 会直接打印可粘贴的 OpenCode / Claude 配置与工具清单。
 
 ## 方式 B：HTTP（任何能发请求的程序）
 
@@ -70,8 +78,10 @@ Invoke-RestMethod "http://127.0.0.1:5370/api/ask" -Method Post `
   -Body ([Text.Encoding]::UTF8.GetBytes((@{ question = "上次会议结论" } | ConvertTo-Json -Compress))) `
   -ContentType "application/json; charset=utf-8"
 
-# 流式（SSE）
-curl.exe -N "http://127.0.0.1:5370/api/ask/stream?q=总体能力"
+# 流式（SSE，v0.9 起只支持 POST；GET 版本已因成本/CSRF 移除）
+curl.exe -N -X POST http://127.0.0.1:5370/api/ask/stream `
+  -H "Content-Type: application/json" `
+  -d '{"question":"总体能力"}'
 ```
 
 完整接口：<http://127.0.0.1:5370/api/docs>

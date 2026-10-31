@@ -96,6 +96,7 @@ def remove_edge(database: Database, edge_id: int) -> dict[str, Any]:
         raise ValueError("关系不存在")
     _record(database, "edge_delete", dict(row))
     with database.tx() as c:
+        c.execute("DELETE FROM edge_sources WHERE edge_id=?", (edge_id,))
         c.execute("DELETE FROM edges WHERE id=?", (edge_id,))
     return {"ok": True, "deleted": edge_id}
 
@@ -164,10 +165,11 @@ def undo_last(database: Database | None = None) -> dict[str, Any]:
             _retitle_page(payload["page_path"], payload["name"])
     elif row["kind"] == "edge_add":
         with database.tx() as c:
+            c.execute("DELETE FROM edge_sources WHERE edge_id=?", (payload["edge_id"],))
             c.execute("DELETE FROM edges WHERE id=?", (payload["edge_id"],))
     elif row["kind"] == "edge_delete":
         with database.tx() as c:
-            c.execute(
+            cur = c.execute(
                 "INSERT INTO edges(src_type, src_id, dst_type, dst_id, rel, weight,"
                 " evidence, source_id, created_at) VALUES(?,?,?,?,?,?,?,?,?)",
                 (payload["src_type"], payload["src_id"], payload["dst_type"],
@@ -175,6 +177,11 @@ def undo_last(database: Database | None = None) -> dict[str, Any]:
                  payload.get("evidence"), payload.get("source_id"),
                  now_iso()),
             )
+            if payload.get("source_id") is not None:
+                c.execute(
+                    "INSERT OR IGNORE INTO edge_sources(edge_id, source_id) VALUES(?,?)",
+                    (int(cur.lastrowid), payload["source_id"]),
+                )
     else:
         raise ValueError(f"未知编辑类型：{row['kind']}")
 

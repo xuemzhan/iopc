@@ -46,12 +46,15 @@ class FilesConnector(Connector):
         st = p.stat()
         return capture(
             kind="file",
-            external_id=f"{p}|{int(st.st_mtime)}|{st.st_size}",
+            # 身份只用路径：同一文件改动后仍是同一来源（内容变化由 content_hash 判定），
+            # mtime/size 放进 meta 仅供追溯（FR-209）。
+            external_id=str(p),
             title=p.stem,
             text=text,
             uri=str(p),
             occurred_at=None,
-            meta={"path": str(p), "size": st.st_size, "suffix": p.suffix},
+            meta={"path": str(p), "size": st.st_size, "suffix": p.suffix,
+                  "mtime": int(st.st_mtime)},
             publish=publish,
         )
 

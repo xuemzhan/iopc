@@ -9,7 +9,7 @@ from typing import Any
 
 from .db import Database, db
 from .llm import llm
-from .util import today
+from .util import atomic_write, today
 from .vault import Vault, _frontmatter, bulletize, wikilink
 
 DAILY_SYSTEM = """你是用户的知识库主编。基于给定的「今日新增素材摘要」写一份极简日报。
@@ -145,7 +145,7 @@ def daily(day: str | None = None, *, force: bool = False,
         extra={"period": day, "granularity": "daily"},
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(fm + f"\n# 日报 {day}\n\n" + "\n".join(body), encoding="utf-8", newline="\n")
+    atomic_write(out_path, fm + f"\n# 日报 {day}\n\n" + "\n".join(body))
     vault.index_add("synthetic", f"daily-{day}", f"日报 {day}", [day], "- type: daily")
     vault.log([f"digest `{day}` → `{vault.rel(out_path)}`（{len(rows)} 条来源）"])
     database.put_note(
@@ -215,8 +215,8 @@ def weekly(anchor: str | None = None, *, force: bool = False,
         tags=["weekly", "review"], sources=[], extra={"period": slug, "granularity": "weekly"},
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(fm + f"\n# 周复盘 {start:%Y-%m-%d} ~ {end:%Y-%m-%d}\n\n" + "\n".join(body),
-                        encoding="utf-8", newline="\n")
+    atomic_write(out_path, fm + f"\n# 周复盘 {start:%Y-%m-%d} ~ {end:%Y-%m-%d}\n\n"
+                 + "\n".join(body))
     vault.index_add("synthetic", slug, f"周复盘 {start:%m.%d}–{end:%m.%d}", [], "- type: weekly")
     vault.log([f"weekly `{slug}` → `{vault.rel(out_path)}`"])
     database.put_note(

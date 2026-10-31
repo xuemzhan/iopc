@@ -21,6 +21,8 @@ from .pipeline import ask as ask_pipeline
 from .util import today
 
 app = typer.Typer(add_completion=False, help="OPC —— 把所有工具接成一个第二大脑")
+ontology_app = typer.Typer(help="数据本体：锁定（不可变基准）/ 审核 / 冲突仲裁")
+app.add_typer(ontology_app, name="ontology")
 console = Console()
 
 
@@ -93,13 +95,86 @@ def capture(
 
 
 @app.command()
+def note(
+    text: str = typer.Argument(..., help="随手记的内容（不触发提炼，秒级落库）"),
+    kind: str = typer.Option("note", "--kind", "-k", help="note | question"),
+    at: str = typer.Option("", "--at", help="位置：会议/视频 timestamp（12:34）或页码（p12）"),
+    meeting: str = typer.Option("", "--meeting", "-m", help="会议 id；auto = 自动探测录制中会议"),
+    source_id: Optional[int] = typer.Option(None, "--source", "-s", help="关联已入库来源 id"),
+    ctx: str = typer.Option("", "--ctx", help="当时的其他工作，如 'VS Code — pipeline.py'"),
+) -> None:
+    """开会/看视频/读论文时随手记：带锚点落库，回应后自动成为关注重点。"""
+    from . import annotate
+    from .db import db
+
+    kw: dict = {"anchor_pos": at or None, "anchor_source_id": source_id}
+    if meeting:
+        mid = meeting
+        if meeting.lower() == "auto":
+            a = annotate.current_anchor(db())
+            if a.get("anchor_kind") != "meeting":
+                console.print("[yellow]没有探测到录制中的会议，按无锚点记录。[/]")
+                mid = ""
+            else:
+                kw["anchor_pos"] = at or a.get("anchor_pos")
+        if mid:
+            kw.update({"anchor_kind": "meeting", "anchor_ref": mid})
+            with db().connect() as c:
+                row = c.execute("SELECT title FROM sources WHERE kind='meeting' AND external_id=?",
+                                (mid,)).fetchone()
+            if row:
+                kw["anchor_title"] = row["title"]
+    row = annotate.add_note(db(), text, kind=kind, context=ctx or None, **kw)
+    where = f"{row['anchor_kind']}:{row['anchor_ref'] or ''}"
+    pos = f" @{row['anchor_pos']}" if row.get("anchor_pos") else ""
+    console.print(f"[green]已记录[/] #{row['id']} · {where}{pos}")
+
+
+@app.command()
+def notes(
+    focused: bool = typer.Option(False, "--focused", "-f", help="只看关注重点"),
+    scope: str = typer.Option("recent", "--scope", help="recent | open | answered | archived"),
+    anchor: str = typer.Option("", "--anchor", "-a", help="过滤锚点，如 meeting:12"),
+    limit: int = typer.Option(20, "--limit", "-n"),
+) -> None:
+    """列出注记（默认最近）。"""
+    from .db import db
+
+    rows = db().list_annotations(scope="focused" if focused else scope,
+                                 anchor=anchor or None, limit=limit)
+    if not rows:
+        console.print("[dim]没有注记。[/]")
+        return
+    table = Table(title="注记", show_lines=False)
+    table.add_column("ID", style="dim")
+    table.add_column("锚点", overflow="fold")
+    table.add_column("内容", overflow="fold")
+    table.add_column("状态", style="dim")
+    for r in rows:
+        flag = " ⭐" if r.get("focused") else ""
+        anchor_txt = f"{r['anchor_kind']}:{r['anchor_ref'] or ''}"
+        if r.get("anchor_pos"):
+            anchor_txt += f" @{r['anchor_pos']}"
+        tag = "↳ " if r.get("parent_id") else ""
+        table.add_row(str(r["id"]), anchor_txt, f"{tag}{r['text']}{flag}", r["status"])
+    console.print(table)
+
+
+@app.command()
 def ask(
     question: str = typer.Argument(..., help="要问的问题"),
     save: bool = typer.Option(False, "--save", "-s", help="把答案存成 wiki/synthetic 页"),
+    source_id: Optional[int] = typer.Option(None, "--source-id", help="只问某个来源"),
+    kind: Optional[str] = typer.Option(None, "--kind", help="只问某类来源（meeting/file/web…）"),
+    since: Optional[str] = typer.Option(None, "--since", help="起始日期 YYYY-MM-DD"),
+    until: Optional[str] = typer.Option(None, "--until", help="截止日期 YYYY-MM-DD"),
 ) -> None:
-    """基于知识库回答，带出处。"""
+    """基于知识库回答，带出处；可限定来源/类型/时间窗。"""
+    scope = {k: v for k, v in
+             (("source_id", source_id), ("kind", kind), ("since", since), ("until", until))
+             if v}
     with console.status("[cyan]检索 + 生成…"):
-        res = ask_pipeline(question, save=save)
+        res = ask_pipeline(question, save=save, scope=scope or None)
     console.print(Panel(res["answer"], title=f"问：{question}", border_style="green"))
     if res.get("citations"):
         console.print("[dim]出处：[/]")
@@ -183,6 +258,19 @@ def sync(
     for r in results:
         flag = "[red]×[/]" if r.get("error") else ("[yellow]=[/]" if r.get("skipped") else "[green]✓[/]")
         console.print(f" {flag} {Path(r.get('path', '')).name}  {r.get('title', r.get('error', ''))}")
+
+    obs = get_connector("obsidian")
+    if getattr(obs, "enabled", True):
+        try:
+            raws = obs.ingest_raw(limit=limit, publish=publish)  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — 一个入口失败不影响文件扫描
+            console.print(f"[yellow]！Obsidian raw/ 扫描失败：{type(exc).__name__}: {exc}[/]")
+            return
+        ok = sum(1 for r in raws if not r.get("error") and not r.get("skipped"))
+        console.print(f"[green]剪藏：{ok}/{len(raws)} 已入库[/]")
+        for r in raws:
+            flag = "[red]×[/]" if r.get("error") else ("[yellow]=[/]" if r.get("skipped") else "[green]✓[/]")
+            console.print(f" {flag} {r.get('title') or r.get('path')}  {r.get('error', '')}")
 
 
 @app.command()
@@ -274,11 +362,28 @@ def token() -> None:
 
 
 @app.command()
-def mcp() -> None:
-    """以 MCP stdio 服务器运行（供 OpenCode / PI / Claude / DSH 调用）。"""
-    from .mcp_server import serve_stdio
+def mcp(serve: bool = typer.Option(False, "--serve", help="以 stdio 服务器运行（客户端会自己拉起）")) -> None:
+    """打印 MCP 接入配置；`--serve` 时以 stdio 服务器运行。"""
+    from .mcp_server import TOOLS, serve_stdio
 
-    serve_stdio()
+    if serve:
+        serve_stdio()
+        return
+    root = str(Path(__file__).resolve().parent.parent)
+    opencode = {
+        "$schema": "https://opencode.ai/config.json",
+        "mcp": {"opc": {"type": "local", "command": ["python", "-m", "opc.mcp_server"],
+                        "enabled": True, "environment": {"PYTHONPATH": root}}},
+    }
+    claude = {"mcpServers": {"opc": {"command": "python", "args": ["-m", "opc.mcp_server"],
+                                     "env": {"PYTHONPATH": root}}}}
+    console.print(f"[cyan]MCP 工具 {len(TOOLS)} 个：[/]" +
+                  " ".join(t["name"] for t in TOOLS))
+    console.print("[dim]OpenCode（~/.config/opencode/opencode.jsonc）[/]")
+    console.print_json(json.dumps(opencode, ensure_ascii=False))
+    console.print("[dim]Claude Desktop（claude_desktop_config.json）[/]")
+    console.print_json(json.dumps(claude, ensure_ascii=False))
+    console.print("[dim]也可以直接运行：python -m opc.mcp_server（或 opc mcp --serve）[/]")
 
 
 @app.command()
@@ -414,6 +519,20 @@ def synthesize(
 
 
 @app.command()
+def embed(
+    limit: int = typer.Option(0, "--limit", help="最多处理多少条笔记（0=全部）"),
+    rebuild: bool = typer.Option(False, "--rebuild", help="全部重嵌（换模型时用）"),
+) -> None:
+    """给笔记建语义向量（云端 embedding，一次批量）。"""
+    from .semantic import index_pending
+
+    with console.status("[cyan]批量 embedding…"):
+        res = index_pending(db(), limit=limit or None, rebuild=rebuild)
+    console.print(f"[green]模型 {res['model']}：扫描 {res['scanned']}，"
+                  f"新嵌 {res['embedded']}，向量总数 {res['total_vectors']}[/]")
+
+
+@app.command()
 def stats(days: int = typer.Option(7, "--days", "-d")) -> None:
     """LLM 用量：每天调用次数与 token。"""
     from .usage import summary as usage_summary
@@ -471,7 +590,8 @@ def repair(redistill: bool = typer.Option(False, "--redistill",
     table.add_row("top1 度", str(b["top1_degree"]), str(a["top1_degree"]))
     table.add_row("top10 平均度", str(b["top10_avg_degree"]), str(a["top10_avg_degree"]))
     console.print(table)
-    console.print(f"[dim]处理来源 {res['sources']} 个，写入共现对 {res['pairs']} 条[/]")
+    console.print(f"[dim]处理来源 {res['sources']} 个，写入共现对 {res['pairs']} 条；"
+                  f"related_to 归一 {res.get('related_to_normalized', 0)} 条[/]")
 
 
 @app.command()
@@ -484,6 +604,21 @@ def rebuild(from_vault: bool = typer.Option(False, "--from-vault",
     if not from_vault:
         console.print("用法：opc rebuild --from-vault（会先备份 data/opc.db）")
         return
+    from .db import db
+
+    before_locked = before_pageless = 0
+    try:
+        with db().connect() as c:
+            before_locked = c.execute(
+                "SELECT (SELECT COUNT(*) FROM entities WHERE locked=1)"
+                " + (SELECT COUNT(*) FROM concepts WHERE locked=1)").fetchone()[0]
+            before_pageless = c.execute(
+                "SELECT (SELECT COUNT(*) FROM entities WHERE locked=1"
+                "        AND COALESCE(page_path,'')='')"
+                " + (SELECT COUNT(*) FROM concepts WHERE locked=1"
+                "   AND COALESCE(page_path,'')='')").fetchone()[0]
+    except Exception:  # noqa: BLE001 — 旧库不可读时继续（重建本来就是修它）
+        pass
     with console.status("[cyan]从库重建索引…"):
         res = do_rebuild(from_vault=True, force=force)
     table = Table(title="重建结果")
@@ -494,6 +629,14 @@ def rebuild(from_vault: bool = typer.Option(False, "--from-vault",
     console.print(table)
     console.print(f"[green]已切换[/] {res['swapped_to']}")
     console.print(f"[dim]旧库备份：{res['backup']}（重启 Hub 后生效）[/]")
+    restored = int(res["counts"].get("locked") or 0)
+    if before_locked and restored < before_locked:
+        console.print(
+            f"[yellow]！重建前锁定 {before_locked} 条，恢复 {restored} 条；"
+            f"其中 {max(0, before_locked - restored)} 条没有页面可依（多为单来源实体），"
+            f"需重新 approve 或先建页再锁。[/]")
+        if before_pageless:
+            console.print(f"[dim]其中无页面的锁定条目：{before_pageless} 条[/]")
 
 
 @app.command()
@@ -536,6 +679,265 @@ def _print_result(res: dict) -> None:
         console.print("[dim]概念：[/]" + "、".join(c["name"] for c in res["concepts"][:8]))
     if res.get("actions"):
         console.print("[dim]行动项：[/]" + f"{len(res['actions'])} 条")
+
+
+# ---------------------------------------------------------------- 数据本体
+@ontology_app.command("lock")
+def ontology_lock(
+    kind: str = typer.Argument(..., help="entity | concept"),
+    ident: str = typer.Argument(..., help="实体/概念的 id 或名称 key"),
+    by: str = typer.Option("human", "--by", help="锁定人标识（审计用）"),
+    force: bool = typer.Option(False, "--force", help="跳过模型判断直接锁定"),
+) -> None:
+    """锁定为不可变基准：人工确认 × 模型判断合理（AND）。"""
+    import json as _json
+
+    from . import ontology
+    from .db import db
+
+    rot = ontology.approve(db(), kind, ident, force=force, by=by)
+    console.print(_json.dumps(rot, ensure_ascii=False, indent=2))
+
+
+@ontology_app.command("unlock")
+def ontology_unlock(
+    kind: str = typer.Argument(..., help="entity | concept"),
+    ident: str = typer.Argument(..., help="id 或名称 key"),
+) -> None:
+    """解除锁定（恢复可修改，必留审计）。"""
+    import json as _json
+
+    from . import ontology
+    from .db import db
+
+    console.print(_json.dumps(ontology.unlock(db(), kind, ident), ensure_ascii=False, indent=2))
+
+
+@ontology_app.command("approve")
+def ontology_approve(
+    kind: str = typer.Argument(..., help="entity | concept"),
+    ident: str = typer.Argument(..., help="id 或名称 key"),
+    force: bool = typer.Option(False, "--force", help="模型判断未通过时仍锁定（审计 override）"),
+    confirm_only: bool = typer.Option(False, "--confirm", help="只确认（confirmed），不锁定"),
+    reject: bool = typer.Option(False, "--reject", help="退场（rejected）：保留行，从图/检索隐藏"),
+) -> None:
+    """审核队列：默认「模型判据 + 锁定」；`--confirm` 只确认，`--reject` 退场。"""
+    import json as _json
+
+    from . import ontology
+    from .db import db
+
+    if confirm_only or reject:
+        out = ontology.review(db(), kind, ident,
+                              action="reject" if reject else "confirm")
+    else:
+        out = ontology.approve(db(), kind, ident, force=force)
+    console.print(_json.dumps(out, ensure_ascii=False, indent=2))
+
+
+@ontology_app.command("conflicts")
+def ontology_conflicts(
+    auto: bool = typer.Option(False, "--auto", help="对 open 冲突批量跑 LLM 仲裁"),
+    limit: int = typer.Option(6, "--limit", help="--auto 时每次最多仲裁几条"),
+) -> None:
+    """冲突台账：列表或自动仲裁。仲裁不修改锁定条目，overturn/unsure 均转人工。"""
+    import json as _json
+
+    from . import ontology
+    from .db import db
+
+    database = db()
+    if auto:
+        results = ontology.adjudicate_pending(database, limit=limit)
+        console.print(_json.dumps(results, ensure_ascii=False, indent=2))
+        return
+    items = database.open_conflicts(limit=50)
+    if not items:
+        console.print("[green]没有 open 状态的冲突。[/]")
+        return
+    table = Table(title="冲突台账（open）", show_lines=True)
+    table.add_column("ID", style="dim")
+    table.add_column("对象", overflow="fold")
+    table.add_column("字段")
+    table.add_column("锁定值", overflow="fold")
+    table.add_column("新数据", style="yellow", overflow="fold")
+    for it in items:
+        row = database.object_row(it["kind"], int(it["ref_id"]))
+        table.add_row(str(it["id"]), f'{it["kind"]}:{row["name"] if row else it["ref_id"]}',
+                      it["field"], it["locked_value"] or "-", it["incoming_value"] or "-")
+    console.print(table)
+    console.print("[dim]逐条仲裁：python -m opc ontology conflicts --auto，或人工处置后在 UI/REST 里 dismiss。[/]")
+
+
+@ontology_app.command("locked")
+def ontology_locked() -> None:
+    """盘点已锁定的不可变基准。"""
+    from .db import db
+
+    database = db()
+    table = Table(title="不可变基准（locked）")
+    table.add_column("类型")
+    table.add_column("ID", style="dim")
+    table.add_column("名称", overflow="fold")
+    table.add_column("类型值/type")
+    table.add_column("锁定于")
+    table.add_column("锁定人", style="dim")
+    with database.connect() as c:
+        for tbl, kind in (("entities", "entity"), ("concepts", "concept")):
+            for r in c.execute(f"SELECT * FROM {tbl} WHERE locked=1").fetchall():
+                table.add_row(kind, str(r["id"]), r["name"],
+                              (r["type"] if kind == "entity" else "-") or "-",
+                              r["locked_at"] or "-", r["locked_by"] or "-")
+    console.print(table)
+
+
+@ontology_app.command("relock")
+def ontology_relock(apply: bool = typer.Option(False, "--apply",
+                                               help="真的写回库（默认只统计）")) -> None:
+    """从页面 frontmatter 恢复锁定态（重建后/手工改页后）。"""
+    import json as _json
+
+    from . import ontology
+    from .db import db
+
+    console.print(_json.dumps(ontology.relock(db(), apply=apply),
+                              ensure_ascii=False, indent=2))
+    if not apply:
+        console.print("[dim]落库：python -m opc ontology relock --apply[/]")
+
+
+@ontology_app.command("types")
+def ontology_types(kind: str = typer.Option("entity", "--kind", help="entity | concept")) -> None:
+    """类型分布（M1）：各类型计数/占比、枚举外占比、状态计数。"""
+    from . import ontology
+    from .db import db
+
+    res = ontology.types(db(), kind)
+    table = Table(title=f"类型分布（{kind}，共 {res['total']}）")
+    table.add_column("类型")
+    table.add_column("数量", justify="right")
+    table.add_column("占比", justify="right")
+    for d in res["types"]:
+        table.add_row(d["type"], str(d["count"]), f"{d['ratio']:.1%}")
+    console.print(table)
+    console.print(f"[dim]枚举外 {res['outside_enum']}（{res['outside_ratio']:.1%}）"
+                  f" · other {res['other_ratio']:.1%} · locked {res['locked']}"
+                  f" · merged {res['merged']}[/]")
+    if res["status"]:
+        console.print("[dim]状态：" + " ".join(f"{k or '(空)'}={v}"
+                                              for k, v in sorted(res["status"].items())) + "[/]")
+
+
+@ontology_app.command("typefix")
+def ontology_typefix(
+    apply: bool = typer.Option(False, "--apply", help="落库（默认 dry-run）"),
+    no_llm: bool = typer.Option(False, "--no-llm", help="只跑尾缀规则，不调模型"),
+    limit: int = typer.Option(0, "--limit", help="最多处理多少条（0=全部）"),
+) -> None:
+    """存量类型校正：规则 + LLM 批量，默认只出方案。"""
+    import json as _json
+
+    from . import ontology
+    from .db import db
+
+    res = ontology.typefix(db(), apply=apply, use_llm=not no_llm,
+                           limit=limit or None)
+    console.print(f"[cyan]扫描 {res['scanned']} 条，提议 {res['proposed']} 条"
+                  f"（{'已落库' if apply else 'dry-run'}）[/]")
+    if res["changes"]:
+        table = Table(title="类型变更")
+        table.add_column("ID", style="dim")
+        table.add_column("名称", overflow="fold")
+        table.add_column("原类型")
+        table.add_column("新类型")
+        table.add_column("通道", style="dim")
+        for ch in res["changes"][:50]:
+            table.add_row(str(ch["id"]), ch["name"], ch["from"] or "-", ch["to"], ch["by"])
+        console.print(table)
+    before = res["before"]["other_ratio"]
+    after = res["after"]["other_ratio"] if res.get("after") else None
+    console.print(f"[dim]other 占比：{before:.1%}" +
+                  (f" → {after:.1%}" if after is not None else "（apply 后看 after）") + "[/]")
+    if not apply:
+        console.print("[dim]落库：python -m opc ontology typefix --apply[/]")
+
+
+@ontology_app.command("candidates")
+def ontology_candidates(
+    limit: int = typer.Option(30, "--limit"),
+    min_jaccard: float = typer.Option(0.7, "--jaccard", help="共现邻居 Jaccard 阈值"),
+    min_neighbors: int = typer.Option(3, "--min-neighbors", help="邻居通道的最小度数"),
+) -> None:
+    """归并候选：同名/别名/邻居三通道，只提议不合并。"""
+    from . import ontology
+    from .db import db
+
+    res = ontology.candidates(db(), limit=limit, min_jaccard=min_jaccard,
+                              min_neighbors=min_neighbors)
+    console.print(f"[cyan]生成候选 {res['generated']} 对，open {len(res['open'])} 条[/]")
+    if not res["open"]:
+        return
+    table = Table(title="归并候选（open）")
+    table.add_column("ID", style="dim")
+    table.add_column("A", overflow="fold")
+    table.add_column("B", overflow="fold")
+    table.add_column("分数", justify="right")
+    table.add_column("理由", overflow="fold")
+    for r in res["open"]:
+        table.add_row(str(r["id"]), r["a_name"], r["b_name"],
+                      f"{r['score']:.2f}", r.get("reason") or "")
+    console.print(table)
+    console.print("[dim]合并：python -m opc ontology merge <A> <B>[/]")
+
+
+@ontology_app.command("merge")
+def ontology_merge(
+    a: str = typer.Argument(..., help="保留端（id 或名称）"),
+    b: str = typer.Argument(..., help="被并入端（id 或名称）"),
+    by: str = typer.Option("human", "--by"),
+    reason: str = typer.Option("", "--reason"),
+) -> None:
+    """执行归并：别名并入、边重指、来源集合合并、状态 merged、审计。"""
+    import json as _json
+
+    from . import ontology
+    from .db import db
+
+    console.print(_json.dumps(ontology.merge(db(), a, b, by=by, reason=reason),
+                              ensure_ascii=False, indent=2))
+
+
+@app.command()
+def caps(check: bool = typer.Option(False, "--check", help="只校验四个入口与注册表是否一致")) -> None:
+    """能力注册表：REST / MCP / CLI / UI 的同一份清单。"""
+    from . import capabilities
+
+    problems = capabilities.validate()
+    if check:
+        if problems:
+            for p in problems:
+                console.print(f"[red]×[/] {p}")
+            raise typer.Exit(1)
+        n = len(capabilities.CAPABILITIES)
+        console.print(f"[green]能力注册表一致（{n} 项）[/]")
+        return
+    res = capabilities.summary()
+    table = Table(title=f"能力注册表（{res['total']} 项）")
+    table.add_column("ID", style="dim")
+    table.add_column("名称", overflow="fold")
+    table.add_column("类型", style="dim")
+    table.add_column("CLI", style="dim")
+    table.add_column("MCP", style="dim", overflow="fold")
+    table.add_column("REST", style="dim", overflow="fold")
+    for c in res["capabilities"]:
+        rest = f"{c['rest']['method']} {c['rest']['path']}" if c["rest"] else "-"
+        table.add_row(c["id"], c["label"], c["kind"], c["cli"] or "-",
+                      ", ".join(c["mcp"]) or "-", rest)
+    console.print(table)
+    if problems:
+        console.print("[yellow]！一致性检查未通过：[/]")
+        for p in problems:
+            console.print(f"  - {p}")
 
 
 def main() -> None:

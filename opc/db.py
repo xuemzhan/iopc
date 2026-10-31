@@ -114,6 +114,50 @@ CREATE TABLE IF NOT EXISTS edges (
 CREATE INDEX IF NOT EXISTS idx_edges_src ON edges(src_type, src_id);
 CREATE INDEX IF NOT EXISTS idx_edges_dst ON edges(dst_type, dst_id);
 
+-- 边 × 来源：weight = 覆盖该关系的不同来源数（同一来源只计一次）
+CREATE TABLE IF NOT EXISTS edge_sources (
+  edge_id INTEGER NOT NULL,
+  source_id INTEGER NOT NULL,
+  PRIMARY KEY(edge_id, source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_edge_sources_src ON edge_sources(source_id);
+
+-- 受控类型（M1）：typefix 只允许落到这里登记的枚举
+CREATE TABLE IF NOT EXISTS ontology_types (
+  kind TEXT NOT NULL,               -- entity | concept
+  name TEXT NOT NULL,
+  description TEXT,
+  builtin INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY(kind, name)
+);
+
+-- 归并候选（M1）：只提议，永不自动合并
+CREATE TABLE IF NOT EXISTS merge_candidates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL DEFAULT 'entity',
+  a_id INTEGER NOT NULL,
+  b_id INTEGER NOT NULL,
+  score REAL NOT NULL DEFAULT 0,
+  reason TEXT,
+  status TEXT NOT NULL DEFAULT 'open',   -- open | merged | rejected
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(kind, a_id, b_id)
+);
+CREATE INDEX IF NOT EXISTS idx_merge_candidates_status ON merge_candidates(status, score DESC);
+
+-- 语义检索（WP-07）：向量按 (target_type,target_id,model) 唯一；float32 小端 blob
+CREATE TABLE IF NOT EXISTS embeddings (
+  target_type TEXT NOT NULL,
+  target_id INTEGER NOT NULL,
+  model TEXT NOT NULL,
+  dim INTEGER NOT NULL DEFAULT 0,
+  vec BLOB NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(target_type, target_id, model)
+);
+CREATE INDEX IF NOT EXISTS idx_embeddings_model ON embeddings(model);
+
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL,
@@ -134,6 +178,18 @@ CREATE TABLE IF NOT EXISTS events (
   payload TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind, id DESC);
+
+-- UI 操作观察：只存事件名与匿名属性，不存正文/查询词，用于后续交互优化
+CREATE TABLE IF NOT EXISTS ui_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  session_id TEXT,
+  event TEXT NOT NULL,
+  props TEXT,
+  client TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ui_events_ts ON ui_events(ts);
+CREATE INDEX IF NOT EXISTS idx_ui_events_event ON ui_events(event, id DESC);
 
 CREATE TABLE IF NOT EXISTS conversations (
   id TEXT PRIMARY KEY,
@@ -181,6 +237,8 @@ CREATE INDEX IF NOT EXISTS idx_entities_updated ON entities(updated_at DESC);
 
 
 FTS_VERSION = "trigram-1"
+# 只有这些关系按"覆盖来源数"计权；其余（related_to/distills/人工连线）是标量边
+SOURCE_COUNTED = {"mentions", "covers", "co_occurs"}
 
 REBUILD_FTS = """
 DROP TABLE IF EXISTS chunks_fts;
@@ -203,6 +261,12 @@ class Database:
         with sqlite3.connect(self.path) as conn:
             conn.executescript(SCHEMA)
             self._migrate(conn)
+            # 操作观察只保留 180 天，避免长期增长
+            from datetime import datetime, timedelta
+
+            cutoff = (datetime.now().astimezone() - timedelta(days=180)).strftime(
+                "%Y-%m-%dT%H:%M:%S%z")
+            conn.execute("DELETE FROM ui_events WHERE ts < ?", (cutoff,))
             row = conn.execute("SELECT value FROM meta WHERE key='fts_version'").fetchone()
             if not row or row[0] != FTS_VERSION:
                 conn.executescript(REBUILD_FTS)
@@ -220,6 +284,8 @@ class Database:
             ("progress", "ALTER TABLE jobs ADD COLUMN progress INTEGER NOT NULL DEFAULT 0"),
             ("stage", "ALTER TABLE jobs ADD COLUMN stage TEXT"),
             ("result", "ALTER TABLE jobs ADD COLUMN result TEXT"),
+            ("priority", "ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0"),
+            ("cancel_requested", "ALTER TABLE jobs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0"),
         ):
             if name not in cols:
                 conn.execute(ddl)
@@ -239,7 +305,261 @@ class Database:
         conn.execute(
             "UPDATE entities SET status='confirmed' WHERE src_count>=2 AND status!='confirmed'"
         )
+
+        # P0-C：locked 不可变基准（实体/概念）+ 冲突台账
+        for tbl in ("entities", "concepts"):
+            lcols = {r[1] for r in conn.execute(f"PRAGMA table_info({tbl})")}
+            if "locked" not in lcols:
+                conn.execute(f"ALTER TABLE {tbl} ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
+            if "locked_at" not in lcols:
+                conn.execute(f"ALTER TABLE {tbl} ADD COLUMN locked_at TEXT")
+            if "locked_by" not in lcols:
+                conn.execute(f"ALTER TABLE {tbl} ADD COLUMN locked_by TEXT")
+        # 边权语义：weight = 覆盖该关系的不同来源数（旧数据一次性回填来源集合）
+        if not conn.execute("SELECT value FROM meta WHERE key='edge_sources_v1'").fetchone():
+            conn.execute(
+                "INSERT OR IGNORE INTO edge_sources(edge_id, source_id)"
+                " SELECT id, source_id FROM edges WHERE source_id IS NOT NULL"
+            )
+            conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('edge_sources_v1','1')")
+
+        # M1 本体治理：归并指针 + 受控类型枚举
+        ecols = {r[1] for r in conn.execute("PRAGMA table_info(entities)")}
+        if "merged_into" not in ecols:
+            conn.execute("ALTER TABLE entities ADD COLUMN merged_into INTEGER")
+        ccols = {r[1] for r in conn.execute("PRAGMA table_info(concepts)")}
+        if "type" not in ccols:
+            conn.execute("ALTER TABLE concepts ADD COLUMN type TEXT")
+        conn.executemany(
+            "INSERT OR IGNORE INTO ontology_types(kind, name, description, builtin)"
+            " VALUES('entity', ?, '受控类型（pipeline.ENTITY_TYPES）', 1)",
+            [("person",), ("org",), ("system",), ("tool",), ("project",),
+             ("place",), ("event",), ("other",)],
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS conflicts ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  kind TEXT NOT NULL,"
+            "  ref_id INTEGER NOT NULL,"
+            "  field TEXT NOT NULL,"
+            "  locked_value TEXT,"
+            "  incoming_value TEXT,"
+            "  incoming_source INTEGER,"
+            "  status TEXT NOT NULL DEFAULT 'open',"
+            "  verdict TEXT,"
+            "  created_at TEXT NOT NULL,"
+            "  decided_at TEXT,"
+            "  UNIQUE(kind, ref_id, field, incoming_source)"
+            ")"
+        )
+        Database._ensure_annotations(conn)
         conn.commit()
+
+    # ---------- locked 基准 / 冲突台账 ----------
+    def object_row(self, kind: str, ident: int | str) -> sqlite3.Row | None:
+        """按 id 或归一化 key 取实体/概念行（含锁定字段）。"""
+        table = "entities" if kind == "entity" else "concepts"
+        with self.connect() as c:
+            if isinstance(ident, int):
+                return c.execute(f"SELECT * FROM {table} WHERE id=?", (ident,)).fetchone()
+            key = str(ident)
+            if key.isdigit():
+                row = c.execute(f"SELECT * FROM {table} WHERE id=?", (int(key),)).fetchone()
+                if row:
+                    return row
+            from .util import normalize_key  # 局部导入避免循环
+
+            return c.execute(f"SELECT * FROM {table} WHERE key=?", (normalize_key(key),)).fetchone()
+
+    def set_locked(self, kind: str, oid: int, locked: bool, *, by: str = "") -> None:
+        from datetime import datetime, timezone
+
+        table = "entities" if kind == "entity" else "concepts"
+        with self.tx() as c:
+            c.execute(
+                f"UPDATE {table} SET locked=?, locked_at=?, locked_by=? WHERE id=?",
+                (1 if locked else 0, now_iso() if locked else None, by if locked else "", oid),
+            )
+
+    def add_conflict(self, kind: str, ref_id: int, field: str, locked_value: str,
+                     incoming_value: str, incoming_source: int | None) -> int:
+        """登记冲突（幂等：同 (kind, ref, field, source) 复用既有行）。返回冲突行 id。"""
+        with self.tx() as c:
+            cur = c.execute(
+                "INSERT OR IGNORE INTO conflicts(kind, ref_id, field, locked_value,"
+                " incoming_value, incoming_source, created_at) VALUES(?,?,?,?,?,?,?)",
+                (kind, ref_id, field, locked_value, incoming_value, incoming_source, now_iso()),
+            )
+            if cur.rowcount > 0:
+                return int(cur.lastrowid)
+            row = c.execute(
+                "SELECT id FROM conflicts WHERE kind=? AND ref_id=? AND field=?"
+                " AND incoming_source=?", (kind, ref_id, field, incoming_source),
+            ).fetchone()
+            return int(row["id"]) if row else -1
+
+    def open_conflicts(self, limit: int = 50) -> list[dict[str, Any]]:
+        from .util import from_json
+
+        with self.connect() as c:
+            rows = c.execute(
+                "SELECT * FROM conflicts WHERE status='open' ORDER BY id LIMIT ?", (limit,)
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["verdict"] = from_json(d.get("verdict") or "", {})
+            except Exception:
+                pass
+            out.append(d)
+        return out
+
+    def decide_conflict(self, cid: int, status: str, verdict: dict[str, Any] | None = None) -> None:
+        from .util import to_json
+
+        with self.tx() as c:
+            c.execute(
+                "UPDATE conflicts SET status=?, verdict=?, decided_at=? WHERE id=?",
+                (status, to_json(verdict or {}), now_iso(), cid),
+            )
+
+    def conflict(self, cid: int) -> dict[str, Any] | None:
+        from .util import from_json
+
+        with self.connect() as c:
+            row = c.execute("SELECT * FROM conflicts WHERE id=?", (cid,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["verdict"] = from_json(d.get("verdict") or "", {}) or {}
+        return d
+
+    # ---------- 注记（P0-F：随手要点/疑问，带上下文锚点） ----------
+    @staticmethod
+    def _ensure_annotations(conn: sqlite3.Connection) -> None:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS annotations ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  kind TEXT NOT NULL DEFAULT 'note',"
+            "  parent_id INTEGER,"
+            "  anchor_kind TEXT NOT NULL DEFAULT 'none',"
+            "  anchor_ref TEXT,"
+            "  anchor_pos TEXT,"
+            "  anchor_source_id INTEGER,"
+            "  anchor_title TEXT,"
+            "  text TEXT NOT NULL,"
+            "  status TEXT NOT NULL DEFAULT 'open',"
+            "  focused INTEGER NOT NULL DEFAULT 0,"
+            "  meta TEXT,"
+            "  created_at TEXT NOT NULL,"
+            "  updated_at TEXT NOT NULL"
+            ")"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_annotations_anchor"
+            " ON annotations(anchor_kind, anchor_ref)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_annotations_status ON annotations(status, focused)"
+        )
+
+    def add_annotation(
+        self, text: str, *, kind: str = "note", parent_id: int | None = None,
+        anchor_kind: str = "none", anchor_ref: str | None = None,
+        anchor_pos: str | None = None, anchor_source_id: int | None = None,
+        anchor_title: str | None = None, meta: dict[str, Any] | None = None,
+    ) -> int:
+        if not (text or "").strip():
+            raise ValueError("注记内容为空")
+        with self.tx() as c:
+            cur = c.execute(
+                "INSERT INTO annotations(kind, parent_id, anchor_kind, anchor_ref,"
+                " anchor_pos, anchor_source_id, anchor_title, text, meta, created_at, updated_at)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (kind, parent_id, anchor_kind or "none", anchor_ref, anchor_pos,
+                 anchor_source_id, anchor_title, text.strip(),
+                 to_json(meta or {}), now_iso(), now_iso()),
+            )
+            return int(cur.lastrowid)
+
+    def annotation(self, aid: int) -> dict[str, Any] | None:
+        from .util import from_json
+
+        with self.connect() as c:
+            row = c.execute("SELECT * FROM annotations WHERE id=?", (aid,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["meta"] = from_json(d.get("meta") or "", {}) or {}
+        return d
+
+    def list_annotations(
+        self, *, scope: str = "recent", anchor: str | None = None, limit: int = 60,
+    ) -> list[dict[str, Any]]:
+        """scope: recent / focused / open / answered | anchor: 'meeting:12'。"""
+        from .util import from_json
+
+        where, args = [], []
+        if scope == "focused":
+            where.append("focused=1")
+        elif scope == "open":
+            where.append("status='open'")
+        elif scope == "answered":
+            where.append("status='answered'")
+        elif scope == "archived":
+            where.append("status='archived'")
+        if anchor:
+            akind, _, aref = anchor.partition(":")
+            where.append("anchor_kind=?")
+            args.append(akind)
+            if aref:
+                where.append("anchor_ref=?")
+                args.append(aref)
+        with self.connect() as c:
+            sql = "SELECT * FROM annotations"
+            if where:
+                sql += " WHERE " + " AND ".join(where)
+            sql += " ORDER BY id DESC LIMIT ?"
+            rows = c.execute(sql, (*args, limit)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["meta"] = from_json(d.get("meta") or "", {}) or {}
+            out.append(d)
+        return out
+
+    def set_annotation_focus(self, aid: int, on: bool) -> None:
+        if not self.annotation(aid):
+            raise ValueError(f"注记 {aid} 不存在")
+        with self.tx() as c:
+            c.execute("UPDATE annotations SET focused=?, updated_at=? WHERE id=?",
+                      (1 if on else 0, now_iso(), aid))
+
+    def archive_annotation(self, aid: int) -> None:
+        if not self.annotation(aid):
+            raise ValueError(f"注记 {aid} 不存在")
+        with self.tx() as c:
+            c.execute("UPDATE annotations SET status='archived', updated_at=? WHERE id=?",
+                      (now_iso(), aid))
+
+    def reply_annotation(self, aid: int, text: str) -> tuple[int, dict[str, Any]]:
+        """回应一条注记：子注记回复 + 父注记自动 answered+focused（A4）。"""
+        parent = self.annotation(aid)
+        if not parent:
+            raise ValueError(f"注记 {aid} 不存在")
+        if parent["parent_id"]:
+            raise ValueError("只可对父注记回应")
+        rid = self.add_annotation(
+            text, kind="reply", parent_id=aid,
+            anchor_kind=parent["anchor_kind"], anchor_ref=parent["anchor_ref"],
+            anchor_pos=parent["anchor_pos"], anchor_source_id=parent["anchor_source_id"],
+            anchor_title=parent["anchor_title"], meta={"for": aid},
+        )
+        with self.tx() as c:
+            c.execute("UPDATE annotations SET status='answered', focused=1, updated_at=?"
+                      " WHERE id=?", (now_iso(), aid))
+        return rid, self.annotation(aid)
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=30)
@@ -499,6 +819,58 @@ class Database:
             )
         return int(n)
 
+    # ---------- 语义检索向量（WP-07） ----------
+    @staticmethod
+    def _pack_vec(vec: list[float]) -> bytes:
+        import struct
+
+        return struct.pack(f"<{len(vec)}f", *[float(x) for x in vec])
+
+    @staticmethod
+    def _unpack_vec(blob: bytes) -> list[float]:
+        import struct
+
+        n = len(blob) // 4
+        return list(struct.unpack(f"<{n}f", blob))
+
+    def put_embedding(self, target_type: str, target_id: int, model: str,
+                      vec: list[float]) -> None:
+        with self.tx() as c:
+            c.execute(
+                "INSERT INTO embeddings(target_type, target_id, model, dim, vec, updated_at)"
+                " VALUES(?,?,?,?,?,?)"
+                " ON CONFLICT(target_type, target_id, model) DO UPDATE SET"
+                " dim=excluded.dim, vec=excluded.vec, updated_at=excluded.updated_at",
+                (target_type, int(target_id), model, len(vec), self._pack_vec(vec), now_iso()),
+            )
+
+    def embeddings(self, model: str, target_type: str = "note") -> list[dict[str, Any]]:
+        with self.connect() as c:
+            rows = c.execute(
+                "SELECT target_id, dim, vec FROM embeddings"
+                " WHERE model=? AND target_type=?", (model, target_type)
+            ).fetchall()
+        return [{"target_id": int(r["target_id"]), "dim": int(r["dim"]),
+                 "vec": self._unpack_vec(r["vec"])} for r in rows]
+
+    def embedding_ids(self, model: str, target_type: str = "note") -> set[int]:
+        with self.connect() as c:
+            rows = c.execute(
+                "SELECT target_id FROM embeddings WHERE model=? AND target_type=?",
+                (model, target_type)).fetchall()
+        return {int(r["target_id"]) for r in rows}
+
+    def embedding_stats(self, model: str = "") -> dict[str, Any]:
+        with self.connect() as c:
+            if model:
+                n = c.execute("SELECT COUNT(*) FROM embeddings WHERE model=?",
+                              (model,)).fetchone()[0]
+            else:
+                n = c.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
+            models = [r[0] for r in c.execute(
+                "SELECT DISTINCT model FROM embeddings").fetchall()]
+        return {"count": int(n), "models": models}
+
     def upsert_concept(
         self,
         key: str,
@@ -536,9 +908,50 @@ class Database:
         evidence: str = "",
         source_id: int | None = None,
     ) -> None:
+        # 只有这几类关系按"覆盖来源数"计权；related_to/distills/人工连线是标量边
+        if rel not in SOURCE_COUNTED or source_id is None:
+            self._add_edge_scalar(src_type, src_id, dst_type, dst_id, rel,
+                                  weight=weight, evidence=evidence, source_id=source_id)
+            return
         with self.tx() as c:
             row = c.execute(
-                "SELECT id, weight, evidence, source_id FROM edges"
+                "SELECT id, evidence FROM edges"
+                " WHERE src_type=? AND src_id=? AND dst_type=? AND dst_id=? AND rel=?",
+                (src_type, src_id, dst_type, dst_id, rel),
+            ).fetchone()
+            if row is None:
+                cur = c.execute(
+                    "INSERT INTO edges(src_type, src_id, dst_type, dst_id, rel, weight, evidence,"
+                    " source_id, created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (src_type, src_id, dst_type, dst_id, rel, weight, evidence, source_id,
+                     now_iso()),
+                )
+                edge_id = int(cur.lastrowid)
+            else:
+                edge_id = int(row["id"])
+                longer = (evidence if len(evidence or "") > len(row["evidence"] or "")
+                          else row["evidence"])
+                evidence = longer
+            # 同一来源只计一次；weight = 覆盖该关系的不同来源数
+            c.execute(
+                "INSERT OR IGNORE INTO edge_sources(edge_id, source_id) VALUES(?,?)",
+                (edge_id, source_id),
+            )
+            count = c.execute(
+                "SELECT COUNT(*) FROM edge_sources WHERE edge_id=?", (edge_id,)
+            ).fetchone()[0]
+            c.execute(
+                "UPDATE edges SET weight=?, evidence=?, source_id=? WHERE id=?",
+                (float(count), evidence, source_id, edge_id),
+            )
+
+    def _add_edge_scalar(self, src_type: str, src_id: int, dst_type: str, dst_id: int,
+                         rel: str, *, weight: float, evidence: str,
+                         source_id: int | None = None) -> None:
+        """不按来源计数的边（distills / related_to / 人工连线）：只写一次，重跑幂等。"""
+        with self.tx() as c:
+            row = c.execute(
+                "SELECT id, evidence, source_id FROM edges"
                 " WHERE src_type=? AND src_id=? AND dst_type=? AND dst_id=? AND rel=?",
                 (src_type, src_id, dst_type, dst_id, rel),
             ).fetchone()
@@ -550,14 +963,11 @@ class Database:
                      now_iso()),
                 )
                 return
-            # 同一来源重跑，或本就不按来源计数的边（source_id=None）：幂等
-            if source_id is None or row["source_id"] == source_id:
-                return
             longer = evidence if len(evidence or "") > len(row["evidence"] or "") else row["evidence"]
-            c.execute(
-                "UPDATE edges SET weight=?, evidence=?, source_id=? WHERE id=?",
-                (float(row["weight"]) + 1.0, longer, source_id or row["source_id"], row["id"]),
-            )
+            keep_source = row["source_id"] if row["source_id"] is not None else source_id
+            if longer != row["evidence"] or keep_source != row["source_id"]:
+                c.execute("UPDATE edges SET evidence=?, source_id=? WHERE id=?",
+                          (longer, keep_source, row["id"]))
 
     # ---------- 检索 ----------
     def search(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
@@ -574,7 +984,10 @@ class Database:
         """问题里出现了实体/概念的别名 → 直接抬高相关笔记。"""
         ql = q.lower()
         with self.connect() as c:
-            ents = c.execute("SELECT id, name, aliases FROM entities").fetchall()
+            ents = c.execute(
+                "SELECT id, name, aliases FROM entities"
+                " WHERE COALESCE(status,'') NOT IN ('merged','rejected')"
+            ).fetchall()
             cons = c.execute("SELECT id, name, aliases FROM concepts").fetchall()
         matched: list[tuple[str, int]] = []
         for kind, rows in (("entity", ents), ("concept", cons)):
@@ -630,7 +1043,11 @@ class Database:
             if len(out) < limit:
                 try:
                     rows = c.execute(
-                        "SELECT c.source_id, c.text, bm25(chunks_fts) AS score, s.title"
+                        "SELECT c.source_id, c.text, bm25(chunks_fts) AS score, s.title,"
+                        " (SELECT n.path FROM notes n WHERE n.source_id=c.source_id"
+                        "   AND n.kind='source' ORDER BY n.id DESC LIMIT 1) AS path,"
+                        " (SELECT n.slug FROM notes n WHERE n.source_id=c.source_id"
+                        "   AND n.kind='source' ORDER BY n.id DESC LIMIT 1) AS slug"
                         " FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid"
                         " JOIN sources s ON s.id = c.source_id"
                         " WHERE chunks_fts MATCH ? ORDER BY score LIMIT ?",
@@ -641,6 +1058,7 @@ class Database:
                 for r in rows:
                     out.append({
                         "type": "chunk", "id": r["source_id"], "title": r["title"],
+                        "path": r["path"] or "", "slug": r["slug"] or "", "kind": "source",
                         "snippet": (r["text"] or "")[:400], "score": float(r["score"]),
                     })
         return out
@@ -671,7 +1089,12 @@ class Database:
             if len(out) < limit and terms:
                 chunk_where = " OR ".join(["c.text LIKE ?"] * len(terms))
                 rows = c.execute(
-                    f"SELECT c.source_id, c.text, s.title FROM chunks c"
+                    f"SELECT c.source_id, c.text, s.title,"
+                    f" (SELECT n.path FROM notes n WHERE n.source_id=c.source_id"
+                    f"   AND n.kind='source' ORDER BY n.id DESC LIMIT 1) AS path,"
+                    f" (SELECT n.slug FROM notes n WHERE n.source_id=c.source_id"
+                    f"   AND n.kind='source' ORDER BY n.id DESC LIMIT 1) AS slug"
+                    f" FROM chunks c"
                     f" JOIN sources s ON s.id=c.source_id WHERE {chunk_where} LIMIT ?",
                     (*[f"%{t}%" for t in terms], limit - len(out)),
                 ).fetchall()
@@ -680,27 +1103,46 @@ class Database:
                     idx = min([text.find(t) for t in terms if text.find(t) >= 0] or [-1])
                     out.append({
                         "type": "chunk", "id": r["source_id"], "title": r["title"],
+                        "path": r["path"] or "", "slug": r["slug"] or "", "kind": "source",
                         "snippet": text[max(0, idx - 60): idx + 300] if idx >= 0 else text[:300],
                         "score": 0.0,
                     })
         return out
 
-    def graph(self, limit: int = 300) -> dict[str, Any]:
+    def graph(self, limit: int = 300, *, min_sources: int | None = None) -> dict[str, Any]:
+        """图谱数据。
+
+        准入规则与建页规则一致：实体/概念至少被 min_sources 个来源覆盖才进图
+        （locked 条目不收起）。单个 limit 是「每个类别」的上限，不是总数。
+        """
         with self.connect() as c:
+            min_src = int(min_sources if min_sources is not None
+                          else cfg().get("vault.min_sources_for_page", 2))
             nodes: list[dict[str, Any]] = []
-            min_src = int(cfg().get("vault.min_sources_for_page", 2))
             ents = c.execute(
                 "SELECT id, name, type, summary, page_path FROM entities"
-                " WHERE src_count >= ? OR status='confirmed'"
+                " WHERE (src_count >= ? OR status='confirmed' OR locked=1)"
+                " AND COALESCE(status,'') NOT IN ('merged','rejected')"
                 " ORDER BY updated_at DESC LIMIT ?",
                 (min_src, limit),
             ).fetchall()
             cons = c.execute(
-                "SELECT id, name, definition, page_path FROM concepts ORDER BY updated_at DESC LIMIT ?",
-                (limit,),
+                "SELECT id, name, definition, aliases, page_path FROM concepts c"
+                " WHERE locked=1 OR ("
+                "   SELECT COUNT(DISTINCT e.source_id) FROM edges e"
+                "   WHERE e.src_type='source' AND e.dst_type='concept'"
+                "     AND e.dst_id=c.id AND e.rel='covers' AND e.source_id IS NOT NULL"
+                " ) >= ?"
+                " ORDER BY updated_at DESC LIMIT ?",
+                (min_src, limit),
             ).fetchall()
             srcs = c.execute(
-                "SELECT id, title, kind FROM sources ORDER BY id DESC LIMIT ?", (limit,)
+                "SELECT s.id, s.title, s.kind, s.uri, s.captured_at,"
+                "  (SELECT n.path FROM notes n WHERE n.source_id=s.id AND n.kind='source'"
+                "    ORDER BY n.id DESC LIMIT 1) AS note_path,"
+                "  (SELECT n.slug FROM notes n WHERE n.source_id=s.id AND n.kind='source'"
+                "    ORDER BY n.id DESC LIMIT 1) AS note_slug"
+                " FROM sources s ORDER BY s.id DESC LIMIT ?", (limit,)
             ).fetchall()
             for r in ents:
                 nodes.append({"id": f"entity:{r['id']}", "ref": int(r["id"]),
@@ -712,26 +1154,44 @@ class Database:
                               "summary": r["definition"] or "", "path": r["page_path"] or ""})
             for r in srcs:
                 nodes.append({"id": f"source:{r['id']}", "ref": int(r["id"]),
-                              "label": r["title"][:40], "group": r["kind"], "type": r["kind"],
-                              "summary": "", "path": ""})
+                              "label": r["title"][:60], "group": r["kind"], "type": r["kind"],
+                              "summary": "", "path": r["note_path"] or "",
+                              "uri": r["uri"] or "", "captured_at": r["captured_at"] or ""})
             ids = {n["id"] for n in nodes}
             links = []
             for r in c.execute(
-                "SELECT id, src_type, src_id, dst_type, dst_id, rel, weight FROM edges LIMIT 4000"
+                "SELECT id, src_type, src_id, dst_type, dst_id, rel, weight, evidence, source_id"
+                " FROM edges ORDER BY weight DESC, id DESC LIMIT 8000"
             ).fetchall():
                 a = f"{r['src_type']}:{r['src_id']}"
                 b = f"{r['dst_type']}:{r['dst_id']}"
                 if a in ids and b in ids:
                     links.append({"id": int(r["id"]), "source": a, "target": b,
-                                  "rel": r["rel"], "weight": r["weight"]})
-            return {"nodes": nodes, "links": links}
+                                  "rel": r["rel"], "weight": r["weight"],
+                                  "evidence": (r["evidence"] or "")[:240],
+                                  "source_id": r["source_id"]})
+            total_concepts = int(c.execute("SELECT COUNT(*) FROM concepts").fetchone()[0])
+            total_entities = int(c.execute("SELECT COUNT(*) FROM entities").fetchone()[0])
+            return {
+                "nodes": nodes, "links": links,
+                "meta": {
+                    "min_sources": min_src,
+                    "shown": {"entities": len(ents), "concepts": len(cons), "sources": len(srcs)},
+                    "total": {"entities": total_entities, "concepts": total_concepts,
+                              "sources": int(c.execute("SELECT COUNT(*) FROM sources")
+                                             .fetchone()[0])},
+                    "gated_concepts": max(0, total_concepts - len(cons)),
+                },
+            }
 
     # ---------- 任务队列 ----------
-    def enqueue(self, kind: str, payload: dict[str, Any]) -> int:
+    def enqueue(self, kind: str, payload: dict[str, Any], *, priority: int = 0) -> int:
+        """入队。priority 越大越先被认领（交互任务 10 / 提炼 8 / 批处理 5）。"""
         with self.tx() as c:
             cur = c.execute(
-                "INSERT INTO jobs(kind, payload, status, created_at) VALUES(?,?, 'pending', ?)",
-                (kind, to_json(payload), now_iso()),
+                "INSERT INTO jobs(kind, payload, status, priority, created_at)"
+                " VALUES(?,?, 'pending', ?, ?)",
+                (kind, to_json(payload), int(priority), now_iso()),
             )
             return int(cur.lastrowid)
 
@@ -741,11 +1201,50 @@ class Database:
             row = c.execute(
                 "UPDATE jobs SET status='running', started_at=?, attempts=attempts+1"
                 " WHERE id = (SELECT id FROM jobs WHERE status='pending'"
-                "             ORDER BY id LIMIT 1)"
+                "             ORDER BY priority DESC, id LIMIT 1)"
                 " RETURNING *",
                 (now_iso(),),
             ).fetchone()
         return dict(row) if row else None
+
+    def request_cancel(self, job_id: int) -> dict[str, Any]:
+        """取消任务：pending 直接置 cancelled；running 置取消标记，由 worker 在检查点收尾。"""
+        with self.tx() as c:
+            row = c.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if not row:
+                return {"ok": False, "reason": "not_found"}
+            status = row["status"]
+            if status in ("done", "failed", "cancelled"):
+                return {"ok": False, "reason": status}
+            if status == "pending":
+                c.execute(
+                    "UPDATE jobs SET status='cancelled', cancel_requested=1, finished_at=?,"
+                    " stage='已取消', error='用户取消' WHERE id=?",
+                    (now_iso(), job_id),
+                )
+            else:
+                c.execute("UPDATE jobs SET cancel_requested=1 WHERE id=?", (job_id,))
+        return {"ok": True, "status": "cancelled" if status == "pending" else "cancelling"}
+
+    def cancel_requested(self, job_id: int) -> bool:
+        with self.connect() as c:
+            row = c.execute("SELECT cancel_requested FROM jobs WHERE id=?", (job_id,)).fetchone()
+        return bool(row and row["cancel_requested"])
+
+    def retry_job(self, job_id: int) -> dict[str, Any]:
+        """把 failed/cancelled 任务重新放回 pending；保持原 payload 与优先级。"""
+        with self.tx() as c:
+            row = c.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if not row:
+                return {"ok": False, "reason": "not_found"}
+            if row["status"] not in ("failed", "cancelled"):
+                return {"ok": False, "reason": row["status"]}
+            c.execute(
+                "UPDATE jobs SET status='pending', progress=0, stage=NULL, error=NULL,"
+                " result=NULL, cancel_requested=0, started_at=NULL, finished_at=NULL"
+                " WHERE id=?", (job_id,),
+            )
+        return {"ok": True, "status": "pending"}
 
     def requeue_stale(self, minutes: int = 30) -> int:
         """running 但超过 N 分钟没动静的任务，放回 pending（崩溃恢复）。"""
@@ -754,21 +1253,31 @@ class Database:
         cutoff = (datetime.now().astimezone() - timedelta(minutes=minutes)).strftime(
             "%Y-%m-%dT%H:%M:%S%z")
         with self.tx() as c:
+            cancelled = c.execute(
+                "UPDATE jobs SET status='cancelled', finished_at=?, stage='已取消',"
+                " error='用户取消（超时回收）'"
+                " WHERE status='running' AND cancel_requested=1"
+                " AND COALESCE(started_at, created_at) < ?",
+                (now_iso(), cutoff),
+            ).rowcount
             cur = c.execute(
                 "UPDATE jobs SET status='pending', error='requeued: stale running'"
-                " WHERE status='running' AND COALESCE(started_at, created_at) < ?",
+                " WHERE status='running' AND cancel_requested=0"
+                " AND COALESCE(started_at, created_at) < ?",
                 (cutoff,),
             )
-            return int(cur.rowcount or 0)
+            return int((cur.rowcount or 0) + (cancelled or 0))
 
     def finish_job(self, job_id: int, ok: bool, error: str | None = None,
-                   result: dict[str, Any] | None = None) -> None:
+                   result: dict[str, Any] | None = None, *, status: str | None = None) -> None:
+        final = status or ("done" if ok else "failed")
         with self.tx() as c:
             c.execute(
                 "UPDATE jobs SET status=?, finished_at=?, error=?, progress=?, stage=?, result=?"
                 " WHERE id=?",
-                ("done" if ok else "failed", now_iso(), error,
-                 100 if ok else 0, "完成" if ok else "失败",
+                (final, now_iso(), error,
+                 100 if final == "done" else 0,
+                 {"done": "完成", "cancelled": "已取消", "failed": "失败"}.get(final, final),
                  to_json(result) if result is not None else None, job_id),
             )
 
@@ -799,10 +1308,12 @@ class Database:
     def recent_jobs(self, limit: int = 20) -> list[dict[str, Any]]:
         with self.connect() as c:
             rows = c.execute(
-                "SELECT id, kind, status, progress, stage, error, created_at, finished_at"
+                "SELECT id, kind, status, progress, stage, error, priority,"
+                " cancel_requested, created_at, finished_at"
                 " FROM jobs ORDER BY id DESC LIMIT ?", (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
+
 
     # ---------- 对话 ----------
     def create_conversation(self, title: str = "新对话") -> str:
@@ -836,6 +1347,14 @@ class Database:
             )
             c.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now_iso(), conv_id))
             return int(cur.lastrowid)
+
+    def update_message(self, mid: int, content: str,
+                       citations: list[dict[str, Any]] | None = None) -> None:
+        with self.tx() as c:
+            c.execute(
+                "UPDATE conversation_messages SET content=?, citations=? WHERE id=?",
+                (content, to_json(citations) if citations else None, mid),
+            )
 
     def conversation(self, conv_id: str) -> dict[str, Any] | None:
         with self.connect() as c:
@@ -871,6 +1390,94 @@ class Database:
         with self.tx() as c:
             c.execute("DELETE FROM conversation_messages WHERE conv_id=?", (conv_id,))
             c.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
+
+    def rename_conversation(self, conv_id: str, title: str) -> None:
+        title = (title or "").strip()[:80] or "未命名"
+        with self.tx() as c:
+            c.execute("UPDATE conversations SET title=?, updated_at=? WHERE id=?",
+                      (title, now_iso(), conv_id))
+
+    # ---------- 使用观察（UI telemetry） ----------
+    def add_ui_event(self, session_id: str, event: str, props: dict[str, Any] | None = None,
+                     client: str = "") -> int:
+        with self.tx() as c:
+            cur = c.execute(
+                "INSERT INTO ui_events(ts, session_id, event, props, client)"
+                " VALUES(?,?,?,?,?)",
+                (now_iso(), (session_id or "")[:64], event[:64],
+                 to_json(props or {})[:4000], (client or "")[:300]),
+            )
+            return int(cur.lastrowid)
+
+    def ui_event_summary(self, days: int = 7, limit: int = 40) -> dict[str, Any]:
+        """只返回计数，不返回任何正文；用于「使用观察」面板。"""
+        from datetime import datetime, timedelta
+
+        cutoff = (datetime.now().astimezone() - timedelta(days=max(1, min(days, 90)))).strftime(
+            "%Y-%m-%dT%H:%M:%S%z")
+        with self.connect() as c:
+            rows = c.execute(
+                "SELECT event, COUNT(*) n FROM ui_events WHERE ts >= ?"
+                " GROUP BY event ORDER BY n DESC LIMIT ?", (cutoff, limit),
+            ).fetchall()
+            total = c.execute(
+                "SELECT COUNT(*) FROM ui_events WHERE ts >= ?", (cutoff,)
+            ).fetchone()[0]
+            sessions = c.execute(
+                "SELECT COUNT(DISTINCT session_id) FROM ui_events WHERE ts >= ? AND session_id != ''",
+                (cutoff,),
+            ).fetchone()[0]
+            daily = c.execute(
+                "SELECT substr(ts, 1, 10) d, COUNT(*) n FROM ui_events WHERE ts >= ?"
+                " GROUP BY d ORDER BY d DESC LIMIT 14", (cutoff,),
+            ).fetchall()
+            fb = c.execute(
+                "SELECT COALESCE(json_extract(props, '$.rating'), '?') r, COUNT(*) n"
+                " FROM ui_events WHERE event='feedback' AND ts >= ?"
+                " GROUP BY r", (cutoff,),
+            ).fetchall()
+        return {
+            "days": days, "total": int(total), "sessions": int(sessions),
+            "events": [{"event": r["event"], "n": int(r["n"])} for r in rows],
+            "daily": [{"date": r["d"], "n": int(r["n"])} for r in daily],
+            "feedback": {str(r["r"]): int(r["n"]) for r in fb},
+        }
+
+    # ---------- 注意力中心 ----------
+    def attention(self, limit: int = 8) -> dict[str, Any]:
+        """聚合需要人处理的项：失败任务 / 本体冲突 / 草稿页 / 未回应注记 / 排队任务。"""
+        with self.connect() as c:
+            def n(sql: str, args: tuple[Any, ...] = ()) -> int:
+                return int(c.execute(sql, args).fetchone()[0])
+
+            counts = {
+                "jobs_failed": n("SELECT COUNT(*) FROM jobs WHERE status='failed'"),
+                "jobs_pending": n("SELECT COUNT(*) FROM jobs WHERE status='pending'"),
+                "conflicts": n("SELECT COUNT(*) FROM conflicts WHERE status='open'"),
+                "drafts": n("SELECT COUNT(*) FROM notes WHERE status='draft'"),
+                "annotations": n("SELECT COUNT(*) FROM annotations WHERE status='open'"
+                                 " AND parent_id IS NULL"),
+            }
+            failed = [dict(r) for r in c.execute(
+                "SELECT id, kind, error, created_at FROM jobs WHERE status='failed'"
+                " ORDER BY id DESC LIMIT ?", (limit,)).fetchall()]
+            conflicts = [dict(r) for r in c.execute(
+                "SELECT id, kind, ref_id, field, locked_value, incoming_value, created_at"
+                " FROM conflicts WHERE status='open' ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()]
+            drafts = [dict(r) for r in c.execute(
+                "SELECT n.id, n.title, n.path, n.source_id, s.kind AS source_kind"
+                " FROM notes n LEFT JOIN sources s ON s.id=n.source_id"
+                " WHERE n.status='draft' ORDER BY n.id DESC LIMIT ?", (limit,)
+            ).fetchall()]
+            notes = [dict(r) for r in c.execute(
+                "SELECT id, text, anchor_kind, anchor_ref, anchor_pos, anchor_title,"
+                " created_at FROM annotations WHERE status='open' AND parent_id IS NULL"
+                " ORDER BY focused DESC, id DESC LIMIT ?", (limit,)
+            ).fetchall()]
+        total = sum(counts.values())
+        return {"counts": counts, "total": total, "failed": failed,
+                "conflicts": conflicts, "drafts": drafts, "annotations": notes}
 
     def stats(self) -> dict[str, int]:
         with self.connect() as c:

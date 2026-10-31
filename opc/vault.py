@@ -84,7 +84,8 @@ class Vault:
             type_="source",
             tags=tags,
             sources=source_refs,
-            extra={"kind": meta.get("kind", ""), "opc_source_id": meta.get("source_id", "")},
+            extra={"kind": meta.get("kind", ""), "opc_source_id": meta.get("source_id", ""),
+                   "content_hash": meta.get("content_hash", "")},
         )
         atomic_write(path, f"{fm}\n# {title}\n\n{summary}\n\n{body}\n")
         return path

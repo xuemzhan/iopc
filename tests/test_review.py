@@ -49,7 +49,7 @@ def test_token_required_from_non_loopback(monkeypatch):
     monkeypatch.setattr(config_mod, "_cfg", cfg)
 
     lan = asyncio.run(token_guard(_req("192.168.1.5:5370", client="192.168.1.9"), _next))
-    assert lan.status_code == 401
+    assert lan.status_code == 403
 
     def with_token() -> Request:
         return Request({
@@ -60,6 +60,47 @@ def test_token_required_from_non_loopback(monkeypatch):
         })
 
     assert asyncio.run(token_guard(with_token(), _next)).status_code == 200
+
+
+def test_lan_without_token_is_rejected(monkeypatch):
+    """没有配置令牌时不能对局域网裸奔（旧行为：任何 IP 都放行）。"""
+    from opc.hub.app import token_guard
+
+    monkeypatch.delenv("OPC_TOKEN", raising=False)
+    monkeypatch.setattr(config_mod, "_cfg", Config({"security": {"token": ""}}))
+    resp = asyncio.run(token_guard(_req("192.168.1.5:5370", client="192.168.1.9"), _next))
+    assert resp.status_code == 403
+
+
+def test_reverse_proxy_does_not_bypass_token(monkeypatch):
+    """经本机反代进来的请求不能被当成本机（尊重 trust_proxy 开关）。"""
+    from opc.hub.app import token_guard
+
+    monkeypatch.setenv("OPC_TOKEN", "s3cret")
+    monkeypatch.setattr(config_mod, "_cfg",
+                        Config({"security": {"token": "s3cret", "trust_proxy": False}}))
+
+    def proxied(host: str = "127.0.0.1:5370") -> Request:
+        return Request({
+            "type": "http", "method": "GET", "scheme": "http", "path": "/api/health",
+            "query_string": b"", "client": ("127.0.0.1", 12345),
+            "server": ("127.0.0.1", 5370),
+            "headers": [(b"host", host.encode()), (b"x-forwarded-for", b"192.168.1.9")],
+        })
+
+    assert asyncio.run(token_guard(proxied(), _next)).status_code == 403
+
+    # 显式信任代理 + 真实来源是本机：才放行
+    monkeypatch.setattr(config_mod, "_cfg",
+                        Config({"security": {"token": "s3cret", "trust_proxy": True}}))
+    assert asyncio.run(token_guard(proxied(), _next)).status_code == 403  # XFF 是 LAN
+    local = Request({
+        "type": "http", "method": "GET", "scheme": "http", "path": "/api/health",
+        "query_string": b"", "client": ("127.0.0.1", 12345),
+        "server": ("127.0.0.1", 5370),
+        "headers": [(b"host", b"127.0.0.1:5370"), (b"x-forwarded-for", b"127.0.0.1")],
+    })
+    assert asyncio.run(token_guard(local, _next)).status_code == 200
 
 
 def test_put_chunks_does_not_leak_fts(tmp_path):
@@ -126,6 +167,70 @@ def test_draft_capture_is_skipped_on_repeat(env):
     b = capture(kind="note", external_id="d-1", title="草稿", text="同一段内容",
                 publish=False, database=database)
     assert a.get("skipped") is False and b.get("skipped") is True
+
+
+def test_draft_can_be_published_by_recapture(env):
+    """草稿不能被"内容未变"永久卡住：显式再捕获（publish=True）应补成正式页。"""
+    cfg, database, _ = env
+    from opc.capture import capture
+
+    a = capture(kind="note", external_id="d-2", title="草稿二", text="同一段内容",
+                publish=False, database=database)
+    b = capture(kind="note", external_id="d-2", title="草稿二", text="同一段内容",
+                publish=True, database=database)
+    assert b.get("skipped") is not True
+    with database.connect() as c:
+        row = c.execute("SELECT status FROM notes WHERE source_id=?",
+                        (a["source_id"],)).fetchone()
+    assert row["status"] == "published"
+
+
+def test_rebuild_keeps_content_hash_for_idempotent_capture(env, tmp_path):
+    """重建后同内容再捕获应 skipped（I2/I3）：content_hash 随页面 frontmatter 恢复。"""
+    cfg, database, vault = env
+    from opc.capture import capture
+    from opc.db import Database
+    from opc.rebuild import build_from_vault
+    from opc.util import sha
+    from opc.vault import Vault
+
+    text = "重建正文内容"
+    r = capture(kind="note", external_id="rh-1", title="重建来源", text=text,
+                database=database)
+    slug = r["path"].rsplit("/", 1)[-1].removesuffix(".md")
+    page = (vault / r["path"]).read_text(encoding="utf-8")
+    assert "content_hash" in page, "来源页必须持久化内容指纹"
+
+    build_from_vault(Vault(), db_path=tmp_path / "rb.db")
+    rebuilt = Database(tmp_path / "rb.db")
+    with rebuilt.connect() as c:
+        row = c.execute("SELECT content_hash FROM sources WHERE external_id=?",
+                        (slug,)).fetchone()
+    assert row and row["content_hash"] == sha(text)
+    again = capture(kind="note", external_id=slug, title="重建来源", text=text,
+                    database=rebuilt)
+    assert again.get("skipped") is True
+
+
+def test_file_external_id_is_stable_across_edits(env, tmp_path, monkeypatch):
+    """FR-209：文件身份只用路径，改动内容不产生新来源。"""
+    from opc.capture import capture as real_capture
+    from opc.connectors import files as files_mod
+
+    cfg, database, _ = env
+    monkeypatch.setattr(files_mod, "capture",
+                        lambda **kw: real_capture(database=database, **kw))
+    p = tmp_path / "笔记.md"
+    p.write_text("第一版内容", encoding="utf-8")
+    conn = files_mod.FilesConnector({"enabled": True, "watch_dirs": [str(tmp_path)],
+                                     "extensions": [".md"]})
+    r1 = conn.ingest(p)
+    p.write_text("第二版内容，改了很多", encoding="utf-8")
+    r2 = conn.ingest(p)
+    assert r1["source_id"] == r2["source_id"], "同一路径必须是同一来源"
+    with database.connect() as c:
+        n = c.execute("SELECT COUNT(*) FROM sources WHERE kind='file'").fetchone()[0]
+    assert n == 1
 
 
 def test_claim_job_is_atomic_and_requeues_stale(tmp_path):

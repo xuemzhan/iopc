@@ -9,8 +9,10 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
-from typing import Any
+from contextlib import contextmanager, nullcontext
+from typing import Any, Iterator
 
 import httpx
 
@@ -21,6 +23,9 @@ BATCH_TASKS = {"extract", "digest", "verdict", "enrich", "embed", "brief"}
 
 _warned: set[str] = set()
 
+# 线程局部归因：同一实例（按 provider/model/task 缓存）可能被多个线程复用
+_attribution = threading.local()
+
 
 class LLMError(RuntimeError):
     pass
@@ -28,6 +33,15 @@ class LLMError(RuntimeError):
 
 class _StreamUnsupported(Exception):
     """provider 不支持 stream_options，需要退回普通流式。"""
+
+
+def attribution(inst: Any, *, sensitive: bool = False,
+                source_id: int | None = None):
+    """给任意 LLM 实例（含测试替身）套上归因上下文；替身没有 attributed 时退化为空上下文。"""
+    ctx = getattr(inst, "attributed", None)
+    if callable(ctx):
+        return ctx(sensitive=sensitive, source_id=source_id)
+    return nullcontext()
 
 
 class LLM:
@@ -121,8 +135,27 @@ class LLM:
                   file=sys.stderr)
 
     # ---------- 调用 ----------
+    @contextmanager
+    def attributed(self, *, sensitive: bool = False,
+                   source_id: int | None = None) -> Iterator["LLM"]:
+        """给本次调用打上「敏感 / 来源」归因，供 `llm_usage` 记账（线程安全）。"""
+        prev = (getattr(_attribution, "sensitive", None),
+                getattr(_attribution, "source_id", None))
+        _attribution.sensitive = bool(sensitive)
+        _attribution.source_id = source_id
+        try:
+            yield self
+        finally:
+            for name, value in (("sensitive", prev[0]), ("source_id", prev[1])):
+                if value is None:
+                    _attribution.__dict__.pop(name, None)
+                else:
+                    setattr(_attribution, name, value)
+
     def _record(self) -> None:
         usage = self.last_usage or {}
+        sensitive = getattr(_attribution, "sensitive", self.sensitive)
+        source_id = getattr(_attribution, "source_id", self.source_id)
         try:
             from .usage import record_llm
 
@@ -131,7 +164,7 @@ class LLM:
                 prompt=int(usage.get("prompt_tokens") or 0),
                 completion=int(usage.get("completion_tokens") or 0),
                 total=int(usage.get("total_tokens") or 0),
-                sensitive=self.sensitive, source_id=self.source_id,
+                sensitive=sensitive, source_id=source_id,
             )
         except Exception:
             pass
@@ -279,6 +312,40 @@ class LLM:
                     {"role": "user", "content": "只输出合法 JSON，不要 markdown 围栏或解释。"}
                 ]
         raise LLMError(f"LLM 未返回可解析的 JSON：{last_err}")
+
+    def embed(self, texts: list[str], *, retries: int = 3) -> list[list[float]]:
+        """OpenAI 兼容 /embeddings：返回与输入同序的向量。"""
+        if not texts:
+            return []
+        self._budget_guard()
+        payload = {"model": self.model, "input": texts}
+        last_err = ""
+        for attempt in range(retries):
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    r = client.post(
+                        f"{self.base_url}/embeddings",
+                        headers={
+                            "Authorization": f"Bearer {self.api_key()}",
+                            "Content-Type": "application/json",
+                        },
+                        json=payload,
+                    )
+                if r.status_code in (429, 500, 502, 503, 504):
+                    last_err = f"HTTP {r.status_code}: {r.text[:300]}"
+                    time.sleep(2 + attempt * 3)
+                    continue
+                if r.status_code >= 400:
+                    raise LLMError(f"Embedding HTTP {r.status_code}: {r.text[:400]}")
+                data = r.json()
+                self.last_usage = data.get("usage", {}) or {}
+                items = sorted(data.get("data", []), key=lambda d: int(d.get("index", 0)))
+                self._record()
+                return [[float(x) for x in it["embedding"]] for it in items]
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                last_err = f"{type(exc).__name__}: {exc}"
+                time.sleep(1 + attempt * 2)
+        raise LLMError(f"Embedding 调用失败（重试 {retries} 次）：{last_err}")
 
 
 def parse_json_loose(text: str) -> dict[str, Any]:

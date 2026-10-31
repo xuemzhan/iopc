@@ -15,6 +15,9 @@ name = "OPC 中枢"
 #   python -m opc token      （自动写入 .env 的 OPC_TOKEN）
 # 然后用 python -m opc serve --lan 启动，手机打开 http://<本机IP>:5370/?token=...
 token = ""
+# 经本机 HTTPS 反代（手机语音）时：默认不采信 X-Forwarded-For，
+# 反代回来的请求同样要令牌；确认反代可信才设为 true。
+trust_proxy = false
 
 [vault]
 # 已存在的 Obsidian 库：遵循库内 CLAUDE.md 的 LLM Wiki schema
@@ -65,6 +68,10 @@ enabled = true
 max_contradiction_checks = 6   # 每次体检最多做几次 LLM 矛盾比对（控制成本）
 apply_warnings = false         # true 时把 > [!warning] 直接写进冲突页
 
+[ontology]
+# 数据本体：锁定（不可变基准）与冲突仲裁（P0-C §9）
+adjudicate_min_confidence = 0.7   # LLM 仲裁置信度低于此值 → 一律转人工
+
 [actions]
 # 行动项聚合与回写
 enabled = true
@@ -80,9 +87,9 @@ alias_boost = true             # 用实体/概念别名给检索加权
 rrf = true                     # 多通道 RRF 融合（关掉退回 v0.2 的串行检索）
 expand_queries = true          # 用 LLM 生成近义检索词（自动缓存）
 expand_cache_days = 30
-embeddings = false             # 装了 Ollama 后可开：ollama pull bge-m3
-ollama_url = "http://127.0.0.1:11434"
-embed_model = "bge-m3"
+# 语义检索（WP-07）：先 `opc embed` 建向量，再打开开关；失败会自动退回纯 FTS
+semantic = false               # true = 把向量通道并入 RRF
+semantic_max_vectors = 50000   # 单次查询最多扫多少向量（内存余弦）
 
 [tools.imeeting]
 enabled = true
@@ -144,6 +151,8 @@ enabled = ["obsidian", "imeeting"]
 sensitive_enabled = true
 keywords = ["示例机构", "示例项目", "内部", "机密"]
 mask_entities = true
+# 匿名操作观察：服务端总开关；前端设置页也可单独关闭
+telemetry_enabled = true
 
 # ---- 多模型路由（PATCH 2）----
 # 密钥只从 .env 读；provider 缺 key 时只在该路由被用到时报错

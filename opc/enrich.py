@@ -10,6 +10,7 @@ from typing import Any
 
 from .db import Database, db
 from .llm import llm
+from .util import atomic_write
 from .vault import Vault
 
 ENRICH_SYSTEM = """你在补全个人知识库的实体/概念页。基于给出的素材写两段内容：
@@ -45,13 +46,16 @@ def stubs(database: Database | None = None, limit: int = 20,
         for k in kinds:
             table = "entities" if k == "entity" else "concepts"
             col = "summary" if k == "entity" else "definition"
+            where = " WHERE locked=0"
+            if k == "entity":
+                where += " AND COALESCE(status,'') NOT IN ('merged','rejected')"
             rows = c.execute(
                 f"SELECT id, name, COALESCE({col},'') AS summary, page_path FROM {table}"
-                f" ORDER BY updated_at DESC"
+                f"{where} ORDER BY updated_at DESC"
             ).fetchall()
             for r in rows:
                 page_path = r["page_path"] or ""
-                p = vault.root / page_path if page_path else None
+                p = vault.safe_path(page_path) if page_path else None
                 if not p or not p.exists():
                     continue
                 text = p.read_text(encoding="utf-8", errors="ignore")
@@ -97,6 +101,11 @@ def _add_related(text: str, related: list[str], kind: str) -> str:
 
 
 def enrich_one(database: Database, item: dict[str, Any]) -> dict[str, Any]:
+    table = "entities" if item["kind"] == "entity" else "concepts"
+    with database.connect() as c:
+        row = c.execute(f"SELECT locked FROM {table} WHERE id=?", (item["id"],)).fetchone()
+    if row and row["locked"]:
+        return {"skipped": "已锁定", **item}
     material = _material(database, item["kind"], item["id"])
     if not material:
         return {"skipped": "没有关联来源", **item}
@@ -121,9 +130,8 @@ def enrich_one(database: Database, item: dict[str, Any]) -> dict[str, Any]:
     new = _set_key_facts(new, facts)
     new = _add_related(new, related, item["kind"])
     if new != text:
-        p.write_text(new, encoding="utf-8", newline="\n")
+        atomic_write(p, new)
 
-    table = "entities" if item["kind"] == "entity" else "concepts"
     col = "summary" if item["kind"] == "entity" else "definition"
     if summary:
         with database.tx() as c:

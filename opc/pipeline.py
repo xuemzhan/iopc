@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from typing import Any
@@ -12,6 +13,7 @@ from typing import Any
 from . import policy
 from .config import cfg
 from .db import Database, db
+from .llm import attribution as llm_attribution
 from .llm import llm
 from .util import atomic_write, chunk_text, normalize_key, now_iso, to_json
 from .vault import Vault, bulletize, wikilink
@@ -218,6 +220,15 @@ def resolve_and_link(database: Database, source_id: int, data: dict[str, Any],
         key = normalize_key(e["name"])
         if not key:
             continue
+        # 锚定优先：命中锁定条目 → 名称/类型以锁定为准，类型分歧进冲突台账
+        from .ontology import anchor
+
+        locked = anchor(database, "entity", key, e, source_id)
+        if locked:
+            e["name"], e["type"] = locked["name"], locked["type"] or e["type"]
+            e["id"], e["slug"] = locked["id"], locked["slug"]
+            ents.append(e)
+            continue
         slug = vault.unique_slug("entity", e["name"])
         # 已存在同名页时复用其路径，不新建
         existing = _existing_page(vault, "entity", key, database)
@@ -233,6 +244,15 @@ def resolve_and_link(database: Database, source_id: int, data: dict[str, Any],
     for c in data["concepts"]:
         key = normalize_key(c["name"])
         if not key:
+            continue
+        # 锚定优先：锁定概念的定义不可覆盖（definition 分歧走 lint 矛盾通道，本层不建冲突）
+        from .ontology import anchor
+
+        locked = anchor(database, "concept", key, c, source_id)
+        if locked:
+            c["name"], c["definition"] = locked["name"], locked["definition"]
+            c["id"], c["slug"] = locked["id"], locked["slug"]
+            cons.append(c)
             continue
         existing = _existing_page(vault, "concept", key, database)
         slug = existing.stem if existing else vault.unique_slug("concept", c["name"])
@@ -355,7 +375,8 @@ def distill_source(source_id: int, *, publish: bool = True, database: Database |
         pass
     if on_progress:
         on_progress(25, "提炼中：抽取实体/概念/主张")
-    data = extract(title_for_llm, text_for_llm)
+    with llm_attribution(llm("extract"), sensitive=sensitive, source_id=source_id):
+        data = extract(title_for_llm, text_for_llm)
     if mask_map:
         data = json.loads(policy.unmask(json.dumps(data, ensure_ascii=False), mask_map))
     if on_progress:
@@ -366,7 +387,8 @@ def distill_source(source_id: int, *, publish: bool = True, database: Database |
         on_progress(80, "写入中：生成 Obsidian 页面")
 
     source_refs = [src["uri"]] if src["uri"] else []
-    meta = {"kind": src["kind"], "source_id": source_id}
+    meta = {"kind": src["kind"], "source_id": source_id,
+            "content_hash": src["content_hash"] or ""}
     raw_note = ""
     if src["raw_path"]:
         source_refs.append(src["raw_path"])
@@ -480,8 +502,16 @@ def build_context(hits: list[dict[str, Any]], limit_chars: int = 9000) -> tuple[
         used += len(text)
         seen_titles.add(title)
         n = len(cites) + 1
-        cites.append({"n": n, "title": title, "path": h.get("path", ""), "slug": h.get("slug", ""),
-                      "id": h.get("id"), "kind": h.get("kind", "")})
+        ctype = h.get("type") or "note"
+        cites.append({
+            "n": n, "title": title, "type": ctype,
+            "path": h.get("path", "") or "", "slug": h.get("slug", "") or "",
+            "id": h.get("id"),
+            "note_id": h.get("id") if ctype == "note" else None,
+            "source_id": h.get("id") if ctype == "chunk" else None,
+            "kind": h.get("kind", "") or "",
+            "snippet": text[:240],
+        })
         blocks.append(f"[{n}] 《{title}》\n{text}")
     return "\n\n".join(blocks), cites
 
@@ -527,19 +557,88 @@ def rewrite_followup(question: str, history: list[dict[str, Any]] | None,
         return question
 
 
-def prepare_ask(question: str, database: Database | None = None,
-                history: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    """检索 + 拼上下文，供一次性问答与流式问答共用（支持多轮）。"""
-    database = database or db()
-    search_q = rewrite_followup(question, history, database)
-    expansions: list[str] = []
-    try:
-        from .query_expand import expand
+def _scope_hits(database: Database, hits: list[dict[str, Any]],
+                scope: dict[str, Any]) -> list[dict[str, Any]]:
+    """问答作用域（FR-408）：按来源 / 来源类型 / 日期范围过滤检索命中。"""
+    out: list[dict[str, Any]] = []
+    with database.connect() as c:
+        for h in hits:
+            if h.get("type") == "note":
+                row = c.execute(
+                    "SELECT s.id AS sid, s.kind AS skind,"
+                    " COALESCE(s.occurred_at, s.captured_at) AS ts"
+                    " FROM notes n JOIN sources s ON s.id=n.source_id WHERE n.id=?",
+                    (h["id"],),
+                ).fetchone()
+            else:
+                row = c.execute(
+                    "SELECT id AS sid, kind AS skind,"
+                    " COALESCE(occurred_at, captured_at) AS ts FROM sources WHERE id=?",
+                    (h["id"],),
+                ).fetchone()
+            if not row:
+                continue
+            if scope.get("source_id") and int(row["sid"]) != int(scope["source_id"]):
+                continue
+            if scope.get("kind") and row["skind"] != scope["kind"]:
+                continue
+            day = str(row["ts"] or "")[:10]
+            if scope.get("since") and day and day < scope["since"]:
+                continue
+            if scope.get("until") and day and day > scope["until"]:
+                continue
+            out.append(h)
+    return out
 
-        expansions = expand(search_q, database)
-    except Exception:
-        expansions = []
+
+def prepare_ask(question: str, database: Database | None = None,
+                history: list[dict[str, Any]] | None = None,
+                on_stage: Any = None,
+                scope: dict[str, Any] | None = None) -> dict[str, Any]:
+    """检索 + 拼上下文，供一次性问答与流式问答共用（支持多轮）。
+
+    on_stage: 可选回调，接收阶段文字，用于 SSE 进度提示。
+    """
+    database = database or db()
+
+    def stage(text: str) -> None:
+        if on_stage:
+            try:
+                on_stage(text)
+            except Exception:
+                pass
+
+    stage("理解追问")
+    # 敏感闸前移（I8）：先给问题与历史分级；命中则脱敏后再送 LLM（改写/扩展），
+    # 检索仍用原文（知识库里存的是原名），送模型的上下文再按同一映射脱敏。
+    history_msgs = _history_messages(history)
+    history_text = "\n".join(m["content"] for m in history_msgs)
+    mask_entities = bool(cfg().get("policy.mask_entities", True))
+    sensitive = policy.classify(f"{question}\n{history_text}", "")
+    state: dict[str, Any] | None = None
+    q_for_llm = question
+    if sensitive and mask_entities:
+        state = policy.new_state()
+        if history_msgs:
+            masked_hist, _ = policy.mask_many([m["content"] for m in history_msgs], state=state)
+            history_msgs = [{**m, "content": t} for m, t in zip(history_msgs, masked_hist)]
+        masked_q, _ = policy.mask_many([question], state=state)
+        q_for_llm = masked_q[0]
+    search_q = rewrite_followup(q_for_llm, history_msgs, database)
+    if state is not None:
+        search_q = policy.unmask(search_q, state["mapping"])
+    expansions: list[str] = []
+    # 敏感问题不做查询扩展：扩展词会进 30 天缓存，令牌化词条出缓存后无法安全还原
+    if state is None:
+        stage("扩展检索词")
+        try:
+            from .query_expand import expand
+
+            expansions = expand(search_q, database)
+        except Exception:
+            expansions = []
     hits: list[dict[str, Any]] = []
+    stage("检索知识库")
     try:
         from .retrieval import search as hybrid_search
 
@@ -548,49 +647,63 @@ def prepare_ask(question: str, database: Database | None = None,
         hits = database.search(search_q, limit=6)
     if not hits and search_q != question:
         hits = database.search(question, limit=6)
+    if scope:
+        hits = _scope_hits(database, hits, scope)
     if not hits:
         return {"messages": [], "citations": [], "empty": True, "expansions": expansions,
-                "search_query": search_q}
+                "search_query": search_q, "hits": 0, "sensitive": sensitive,
+                "masked": state is not None,
+                "mask_map": state["mapping"] if state else {}}
     with database.connect() as c:
         for h in hits:
             if h["type"] == "note":
                 row = c.execute("SELECT body_md FROM notes WHERE id=?", (h["id"],)).fetchone()
                 if row:
                     h["body_md"] = row["body_md"]
+    stage("准备上下文")
     context, cites = build_context(hits)
-    # PATCH 1：问答同样过敏感闸（上下文里可能带原文）
-    sensitive = policy.classify(context, question)
-    mask_map: dict[str, str] = {}
+    # 上下文里可能带原文：与问题共用同一映射，令牌一致
+    if mask_entities and (sensitive or policy.classify(context, "")):
+        sensitive = True
+        if state is None:
+            state = policy.new_state()
+        context, _ = policy.mask_many([context], state=state)
+    mask_map: dict[str, str] = state["mapping"] if state else {}
     q_prompt, sq_prompt = question, search_q
-    if sensitive and cfg().get("policy.mask_entities", True):
-        masked, mask_map = policy.mask_many([context, question, search_q])
-        context, q_prompt, sq_prompt = masked
+    if state is not None:
+        q_prompt = policy.mask_many([question], state=state)[0][0]
+        sq_prompt = policy.mask_many([search_q], state=state)[0][0]
     messages = [{"role": "system", "content": ASK_SYSTEM}]
-    messages += _history_messages(history)
+    messages += history_msgs
     tail = f"知识库片段：\n{context}\n\n问题：{q_prompt}"
     if search_q != question:
         tail += f"\n（检索时理解为：{sq_prompt}）"
     messages.append({"role": "user", "content": tail})
     return {"messages": messages, "citations": cites, "empty": False,
-            "expansions": expansions, "search_query": search_q,
-            "sensitive": sensitive, "mask_map": mask_map}
+            "expansions": expansions, "search_query": search_q, "hits": len(cites),
+            "sensitive": sensitive, "masked": state is not None,
+            "mask_map": mask_map}
 
 
 def ask(question: str, *, save: bool = False, database: Database | None = None,
-        history: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        history: list[dict[str, Any]] | None = None,
+        scope: dict[str, Any] | None = None) -> dict[str, Any]:
     database = database or db()
-    prepared = prepare_ask(question, database, history=history)
+    prepared = prepare_ask(question, database, history=history, scope=scope)
     if prepared["empty"]:
         return {"answer": "知识库里还没有相关内容。先用 /capture 记一条，或 /meeting 导入一场会议。",
                 "citations": [], "saved": None, "expansions": prepared.get("expansions", [])}
     cites = prepared["citations"]
-    answer = llm("ask").chat(prepared["messages"], max_tokens=1800)
+    with llm_attribution(llm("ask"), sensitive=bool(prepared.get("sensitive"))):
+        answer = llm("ask").chat(prepared["messages"], max_tokens=1800)
     if prepared.get("mask_map"):
         answer = policy.unmask(answer, prepared["mask_map"])
     saved = None
     if save:
         saved = save_synthetic(question, answer, cites, database)
-    database.event("ask", {"question": question, "hits": len(cites)})
+    database.event("ask", {"q_len": len(question),
+                           "q_fp": hashlib.sha1(question.encode("utf-8")).hexdigest()[:8],
+                           "hits": len(cites)})
     return {"answer": answer, "citations": cites, "saved": saved,
             "expansions": prepared.get("expansions", [])}
 

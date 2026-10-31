@@ -19,7 +19,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from .db import Database
 
 RRF_K = 60
-CHANNEL_WEIGHT = {"alias": 1.2, "fts": 1.0, "like": 0.5}
+CHANNEL_WEIGHT = {"alias": 1.2, "vec": 1.1, "fts": 1.0, "like": 0.5}
 META_HINTS = ("日报", "周报", "复盘", "体检", "行动项", "lint")
 
 
@@ -87,6 +87,13 @@ def search(database: "Database", query: str, limit: int = 8, *,
     channels: dict[str, list[dict[str, Any]]] = {"fts": [], "like": []}
     if use_alias:
         channels["alias"] = database._alias_hits(q, max(2, limit // 2))
+    if cfg().get("search.semantic", False):
+        try:
+            from .semantic import search as vec_search
+
+            channels["vec"] = vec_search(database, q, max(limit, 6))
+        except Exception:  # noqa: BLE001 — 语义通道失败不影响字面检索
+            channels["vec"] = []
 
     for i, qq in enumerate(queries):
         terms = _terms(qq)

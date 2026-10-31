@@ -115,3 +115,46 @@ def push_to_imeeting(source_id: int, database: Database | None = None) -> dict[s
     for it in items:
         results.append({"text": it["text"], "resp": conn.push_action(int(src["external_id"]), it["text"], it["owner"])})
     return {"pushed": len(results), "results": results}
+
+
+def append_items(items: list[str]) -> dict[str, Any]:
+    """把一段回答里提炼出的行动项追加到「行动项.md」（去重，不动勾选状态）。"""
+    vault = Vault()
+    page = vault.root / cfg().get("actions.page", "行动项.md")
+    clean: list[str] = []
+    seen: set[str] = set()
+    for raw in items or []:
+        text = " ".join(str(raw or "").split()).strip().lstrip("-* ").strip()
+        if text.startswith("[ ]"):
+            text = text[3:].strip()
+        if not text or len(text) > 240:
+            continue
+        key = re.sub(r"\s+", "", text).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        clean.append(text)
+    if not clean:
+        return {"path": vault.rel(page), "added": 0, "skipped": len(items or [])}
+
+    existing = page.read_text(encoding="utf-8", errors="ignore") if page.exists() else ""
+    existing_keys = {re.sub(r"\s+", "", m.group(1)).lower()
+                     for m in re.finditer(r"^- \[(?: |x|X)\] (.+?)(?: —— .*)?$", existing, re.M)}
+    new_lines = [f"- [ ] {t}" for t in clean
+                 if re.sub(r"\s+", "", t).lower() not in existing_keys]
+    if not new_lines:
+        return {"path": vault.rel(page), "added": 0, "skipped": len(clean)}
+
+    if not existing:
+        fm = _frontmatter(title="行动项", type_="synthetic", tags=["actions", "todo"],
+                          sources=[], extra={"generated_at": today()})
+        existing = f"{fm}\n# 行动项\n\n## 待办（0）\n\n## 已完成（0）\n"
+    block = "\n".join(new_lines)
+    marker = "\n## 已完成"
+    if marker in existing:
+        existing = existing.replace(marker, f"\n{block}\n{marker}", 1)
+    else:
+        existing = existing.rstrip() + f"\n\n## 待办\n\n{block}\n"
+    atomic_write(page, existing)
+    vault.log([f"actions 追加：{len(new_lines)} 条 → `{vault.rel(page)}`"])
+    return {"path": vault.rel(page), "added": len(new_lines), "skipped": len(clean) - len(new_lines)}

@@ -1,4 +1,4 @@
-# 在桌面创建「OPC 速记」快捷方式，并绑定全局热键 Ctrl+Alt+O
+﻿# 在桌面创建「OPC 速记」快捷方式，并绑定全局热键 Ctrl+Alt+O
 $ErrorActionPreference = "Stop"
 $desktop = [Environment]::GetFolderPath("Desktop")
 $lnk = Join-Path $desktop "OPC 速记.lnk"

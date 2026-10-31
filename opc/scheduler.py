@@ -21,7 +21,9 @@ from .digest import daily, weekly
 from .lint import run as lint_run
 from .util import now_iso
 
-FINISHED_STATES = {"finished", "completed", "done", "ended", "stopped", "finalized"}
+FINISHED_STATES = {"finished", "completed", "done", "ended", "stopped", "finalized", "abandoned"}
+# abandoned 是 iMeeting 对「连接中断/超时」的标记：已收内容照常落库。
+# 不把它算作结束，等于整场会议白录；入库时正文会带「异常中断」提示。
 
 
 def _hhmm(value: str) -> tuple[int, int]:

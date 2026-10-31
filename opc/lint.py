@@ -12,7 +12,7 @@ from typing import Any
 
 from .db import Database, db
 from .llm import llm
-from .util import now_iso, today
+from .util import atomic_write, now_iso, today
 from .vault import Vault, _frontmatter, bulletize, wikilink
 
 LINK_RE = re.compile(r"\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]")
@@ -231,7 +231,7 @@ def run(*, apply_warnings: bool = False, max_checks: int | None = None,
     fm = _frontmatter(title=f"知识库体检 {today()}", type_="synthetic", tags=["lint", "health"],
                       sources=[], extra={"generated_at": mark})
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(fm + "\n" + "\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    atomic_write(path, fm + "\n" + "\n".join(lines) + "\n")
 
     if apply_warnings and conflicts:
         for c in conflicts:
@@ -243,7 +243,7 @@ def run(*, apply_warnings: bool = False, max_checks: int | None = None,
                 warn = (f"> [!warning] 与《{other}》存在潜在冲突\n"
                         f"> {c['reason']}（{c['severity']}）\n")
                 if warn not in blob:
-                    p.write_text(blob.rstrip() + "\n\n" + warn, encoding="utf-8", newline="\n")
+                    atomic_write(p, blob.rstrip() + "\n\n" + warn)
 
     vault.log([f"lint 页面 {s['pages']} · 孤儿 {len(s['orphans'])} · 断链 {len(s['broken'])}"
                f" · 空壳 {len(s['stubs'])} · 矛盾 {len(conflicts)} → `{vault.rel(path)}`"])

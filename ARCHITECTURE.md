@@ -1,5 +1,8 @@
 # OPC 架构
 
+> **归档说明（L2 设计详注）**：本文保留早期设计论证与实现细节，规范版本已迁至 `docs/02-DESIGN.md`。
+> 数据模型、ADR、已知限制与本文冲突时，以 `docs/02` 和实测代码为准。最后核实：2026-10-31。
+
 ## 1. 目标与非目标
 
 **目标**
@@ -162,7 +165,7 @@ v0.3 起是**三通道 RRF 融合 + 查询扩展**：
 
 | 入口 | 实现 | 说明 |
 |---|---|---|
-| Web 控制台 | 单文件 `opc/hub/static/index.html`（无构建、无 CDN） | 自动判断记/问；POST+SSE 多轮对话；引用可点开笔记预览；命令补全；Canvas 图谱 |
+| Web 控制台 | 单文件 `opc/hub/static/index.html`（无构建、无 CDN） | 自动判断记/问；POST+SSE 多轮对话；引用可点开笔记预览；命令补全；Canvas 图谱；注记 pane（自动锚点） |
 | CLI | `typer` | 全能力覆盖，适合脚本与排障 |
 | MCP | 手写 JSON-RPC stdio（无第三方 SDK） | 9 个工具：capture / ask / search / meetings / ingest_meeting / ingest / tools / synthesize / graph |
 | REST | FastAPI | 与 Web 同源，`/api/docs` 有 OpenAPI；`/api/voice` 接录音上传 |
@@ -175,9 +178,13 @@ SSE 细节：`POST /api/ask/stream` 先推 `citations`（含 `search_query` 与 
 
 **图谱编辑（v0.7）**：画布支持缩放/平移/拖拽/聚焦；选中节点后可重命名（只改显示名与页面 title/H1，`key` 与文件名保持稳定，避免链接断裂）、在两节点间加 `related_to` 边、或删除任意一条边（`DELETE /api/graph/edges/{id}`）。这些是「人给的判断」，与抽取结果分开记账（人工边 `evidence="人工连线"`）；每次编辑写一条 `graph_edits`（kind + 逆操作 payload），`POST /api/graph/undo` 按栈顶回滚，重命名会同时还原页面 title/H1。
 
+**控制台 v0.9（AI 原生工作台）**：`index.html` + `app.css` + `app.js`，零构建、无 CDN。输入区提供「自动 / 记 / 问 / 做」四种意图；捕获用 jobs 异步化并立即返回任务卡，问答用 POST SSE，先推 `status`（理解/扩展/检索/准备）、`citations`（含 `hits/search_query/expansions/sensitive`）、再推 `delta`，`done` 带 `usage/model/latency_ms/first_token_ms`；生成期间可停止，增量会写回会话消息，客户端断开不丢已生成部分。答案渲染先转义再按块解析（标题/列表/任务/表格/代码/引用/链接），正文 `[n]` 可直接点开 note 或 chunk 来源。任务队列支持 `priority`（交互 10 / 提炼 8 / 批处理 5）、取消标记与重试。图谱默认只显示被 ≥2 个来源覆盖的概念，布局在 Web Worker 中跑，标签避让，关系和节点类型可筛，节点详情带原始证据。顶栏 `待处理` 聚合失败任务/本体冲突/草稿页/未回应注记。`ui_events` + `POST /api/telemetry` 记录匿名操作事件（只存事件名与数字/枚举/长度，不存正文/查询词/文件名），设置页可查看近 7 天汇总并关闭。安全上移除成本型 GET ask，加 Origin / Sec-Fetch-Site 校验与 CSP / nosniff / frame-ancestors；`/api/open` 校验库内路径并 urlencode。
+
 **会话存储（v0.5）**：`conversations` + `conversation_messages` 两张表。`/api/ask*` 不带 `conversation_id` 时自动建会话，服务端自己取最近 6 条历史——刷新页面、换设备都不丢上下文；右侧「对话」标签只是这张表的视图。
 
 **任务队列（v0.5）**：`capture` / `ingest_meeting` / `voice` 都可异步。Hub 启动时拉起 `JobWorker` 线程轮询 `jobs` 表，用 `progress` / `stage` / `result` 三列对外汇报；前端每 1.2s 轮询 `/api/jobs/{id}` 画进度条。不传 `background=true` 时行为与同步版完全一致。
+
+**注记（v0.8，P0-F）**：`annotations` 表存"开会/看视频/读论文时随手记"的要点与疑问，带 `anchor_kind/ref/pos`（会议 timestamp、来源 id、页码）与 `focused` 标记。`GET /api/anchor` 探测 iMeeting 正在录制的会议并取最近转写段时间戳，探测失败安静降级 `none`；`POST /api/annotations/{id}/reply` 创建子注记并把父注记标成 `answered + focused`（「有人回答/我主动输入 → 关注重点」）；会议入库时 `render_for_meeting` 把注记节并入会议正文，随提炼进入知识页，与实体/概念建立链接。注记不触发 LLM（区别于 `/api/capture` 的全量提炼）。
 
 **访问控制（v0.5）**：`OPC_TOKEN` 存在时，非回环地址的请求必须带 `X-OPC-Token` 或 `?token=`；本机永远放行。`opc serve --lan` 绑 `0.0.0.0`，`opc token` 生成令牌写 `.env`。静态壳（`/`、`/sw.js`、图标）不校验令牌，否则登录页都打不开。
 

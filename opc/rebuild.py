@@ -65,6 +65,7 @@ def build_from_vault(vault: Vault | None = None, db_path: Path | None = None) ->
     entity_ids: dict[str, int] = {}
     concept_ids: dict[str, int] = {}
     related_links: list[tuple[str, str, str]] = []  # (kind, slug, target_link)
+    locked_restored = 0
     for kind, folder, table in (("entity", "entities", "entities"),
                                 ("concept", "concepts", "concepts")):
         for p in sorted((vault.wiki / folder).glob("*.md")):
@@ -76,18 +77,25 @@ def build_from_vault(vault: Vault | None = None, db_path: Path | None = None) ->
                 aliases = [aliases]
             summary = _summary_of(body)
             key = normalize_key(name)
+            locked = str(fm.get("locked", "")).strip().lower() in ("true", "1", "yes")
             if kind == "entity":
                 etype = str(fm.get("entity_type") or (fm.get("tags") or ["other"])[0])
                 eid = database.upsert_entity(key, name, etype, aliases=[str(a) for a in aliases],
                                              summary=summary, page_path=_rel(vault, p))
                 entity_ids[p.stem] = eid
                 entity_ids[slugify(name)] = eid
+                node_id = eid
             else:
                 cid = database.upsert_concept(key, name, summary,
                                               aliases=[str(a) for a in aliases],
                                               page_path=_rel(vault, p))
                 concept_ids[p.stem] = cid
                 concept_ids[slugify(name)] = cid
+                node_id = cid
+            if locked:
+                database.set_locked(kind, int(node_id), True,
+                                    by=str(fm.get("locked_by") or "rebuild"))
+                locked_restored += 1
             for target in LINK_RE.findall(body):
                 related_links.append((kind, p.stem, target.strip()))
 
@@ -102,8 +110,10 @@ def build_from_vault(vault: Vault | None = None, db_path: Path | None = None) ->
         if isinstance(refs, str):
             refs = [refs]
         uri = str(refs[0]) if refs else None
+        # 页面 frontmatter 里存了内容指纹：重建后同内容再捕获仍可幂等跳过
+        content_hash = str(fm.get("content_hash") or "").strip() or None
         sid = database.upsert_source(kind, p.stem, title, uri=uri,
-                                     content_hash=None, raw_path=None,
+                                     content_hash=content_hash, raw_path=None,
                                      meta={"rebuild": True, "page": _rel(vault, p)})
         database.put_document(sid, body)
         database.put_chunks(sid, sid, [body])
@@ -173,6 +183,7 @@ def build_from_vault(vault: Vault | None = None, db_path: Path | None = None) ->
             "entities": c.execute("SELECT COUNT(*) FROM entities").fetchone()[0],
             "concepts": c.execute("SELECT COUNT(*) FROM concepts").fetchone()[0],
             "edges": c.execute("SELECT COUNT(*) FROM edges").fetchone()[0],
+            "locked": locked_restored,
         }
     return {"db": str(db_path), "counts": counts}
 
@@ -180,8 +191,11 @@ def build_from_vault(vault: Vault | None = None, db_path: Path | None = None) ->
 def _hub_alive() -> bool:
     import urllib.request
 
+    from .config import cfg
+
+    port = int(cfg().get("hub.port", 5370))
     try:
-        with urllib.request.urlopen("http://127.0.0.1:5370/api/health", timeout=1) as r:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=1) as r:
             return r.status == 200
     except Exception:
         return False

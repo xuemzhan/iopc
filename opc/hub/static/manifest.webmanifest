@@ -1,16 +1,26 @@
 {
-  "name": "OPC 第二大脑",
+  "id": "/",
+  "name": "OPC · 第二大脑",
   "short_name": "OPC",
-  "description": "把看到的、听到的、学到的归集、提炼、建链",
+  "description": "把看到的、听到的、学到的归集、提炼、建链，然后一个入口就能问。",
   "lang": "zh-CN",
+  "dir": "ltr",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "any",
   "background_color": "#0a0c10",
   "theme_color": "#0a0c10",
+  "categories": ["productivity", "utilities"],
   "icons": [
-    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "/static/logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "记一条", "short_name": "记", "url": "/?intent=note", "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192" }] },
+    { "name": "问知识库", "short_name": "问", "url": "/?intent=ask", "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192" }] }
   ]
 }

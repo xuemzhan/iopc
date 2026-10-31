@@ -101,6 +101,86 @@ TOOLS: list[dict[str, Any]] = [
         "description": "取知识图谱的节点与边（用于可视化或推理关联）。",
         "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer", "default": 150}}},
     },
+    {
+        "name": "opc_ontology_status",
+        "description": "查看本体治理状态：类型分布、待审队列数量、开放合并候选（只读）。",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "opc_ontology_merge",
+        "description": "把两个实体归并（A 保留、B 并入）：别名合并、边重指、状态 merged。不可撤销，先确认。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "a": {"type": "string", "description": "保留端（id 或名称）"},
+                "b": {"type": "string", "description": "被并入端（id 或名称）"},
+                "reason": {"type": "string"},
+            },
+            "required": ["a", "b"],
+        },
+    },
+    {
+        "name": "opc_ontology_review",
+        "description": "人工审阅实体：confirm（确认）或 reject（退场，保留行但从图/检索隐藏）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ident": {"type": "string", "description": "实体 id 或名称"},
+                "action": {"type": "string", "enum": ["confirm", "reject"]},
+            },
+            "required": ["ident", "action"],
+        },
+    },
+    {
+        "name": "opc_note",
+        "description": "随手注记（不触发 LLM）：开会/看视频/读论文时记一条，自动挂当前会议时间戳或来源位置。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "kind": {"type": "string", "enum": ["note", "question"]},
+                "ctx": {"type": "string", "description": "当时在做的事（可选）"},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "opc_notes",
+        "description": "列出注记（recent/focused/open/answered/archived）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "scope": {"type": "string", "default": "recent"},
+                "limit": {"type": "integer", "default": 20},
+            },
+        },
+    },
+    {
+        "name": "opc_graph_edit",
+        "description": "编辑知识图谱：rename（改名）/ link（连线）/ unlink（断线），写台账可撤销。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["rename", "link", "unlink"]},
+                "kind": {"type": "string", "enum": ["entity", "concept"]},
+                "node_id": {"type": "integer"},
+                "name": {"type": "string"},
+                "type": {"type": "string", "description": "rename 时可选的新类型"},
+                "rel": {"type": "string", "default": "related_to"},
+                "src_type": {"type": "string"},
+                "src_id": {"type": "integer"},
+                "dst_type": {"type": "string"},
+                "dst_id": {"type": "integer"},
+                "edge_id": {"type": "integer"},
+            },
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "opc_capabilities",
+        "description": "列出 OPC 的能力注册表（REST/MCP/CLI/UI 同源清单），可先看有什么再调用。",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
 ]
 
 
@@ -128,6 +208,56 @@ def _call(name: str, args: dict[str, Any]) -> Any:
         return synth_build(args["name"], kind=args.get("kind"))
     if name == "opc_graph":
         return db().graph(int(args.get("limit", 150)))
+    if name == "opc_ontology_status":
+        from . import ontology
+
+        database = db()
+        t = ontology.types(database, "entity")
+        with database.connect() as c:
+            proposed = c.execute(
+                "SELECT COUNT(*) FROM entities WHERE status='proposed'"
+                " AND merged_into IS NULL").fetchone()[0]
+            open_c = [dict(r) for r in c.execute(
+                "SELECT a_id, b_id, score, reason FROM merge_candidates"
+                " WHERE status='open' ORDER BY score DESC LIMIT 10").fetchall()]
+        return {"types": t, "proposed": int(proposed),
+                "candidates_open": len(open_c), "candidates": open_c}
+    if name == "opc_ontology_merge":
+        from . import ontology
+
+        return ontology.merge(db(), args["a"], args["b"], reason=str(args.get("reason") or ""))
+    if name == "opc_ontology_review":
+        from . import ontology
+
+        return ontology.review(db(), "entity", args["ident"], action=args["action"])
+    if name == "opc_note":
+        from .annotate import add_note
+
+        return add_note(db(), args["text"], kind=args.get("kind", "note"),
+                        context=args.get("ctx"))
+    if name == "opc_notes":
+        return {"items": db().list_annotations(scope=args.get("scope", "recent"),
+                                               limit=int(args.get("limit", 20)))}
+    if name == "opc_graph_edit":
+        from . import graph_edit
+
+        action = args["action"]
+        if action == "rename":
+            return graph_edit.rename_node(db(), args["kind"], int(args["node_id"]),
+                                          name=args.get("name"),
+                                          type_=args.get("type"))
+        if action == "link":
+            return graph_edit.create_edge(
+                db(), src_type=args["src_type"], src_id=int(args["src_id"]),
+                dst_type=args["dst_type"], dst_id=int(args["dst_id"]),
+                rel=args.get("rel", "related_to"))
+        if action == "unlink":
+            return graph_edit.remove_edge(db(), int(args["edge_id"]))
+        raise ValueError(f"未知 action：{action}")
+    if name == "opc_capabilities":
+        from . import capabilities
+
+        return capabilities.summary()
     raise KeyError(f"未知工具 {name}")
 
 

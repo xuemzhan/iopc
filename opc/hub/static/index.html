@@ -3,1224 +3,234 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="description" content="OPC —— 本地优先的第二大脑：记下、提炼、建链、问答。" />
+<meta name="theme-color" content="#0a0c10" />
 <link rel="manifest" href="/manifest.webmanifest" />
-<meta name="theme-color" content="#0b0d10" />
-<link rel="apple-touch-icon" href="/icon-192.png" />
+<link rel="icon" href="/static/logo.svg" type="image/svg+xml" />
+<link rel="icon" href="/static/favicon-32.png" sizes="32x32" type="image/png" />
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<title>OPC</title>
-<style>
-  :root{
-    --bg:#0b0d10; --bg-soft:#101318; --surface:#141920; --line:#1f252e;
-    --fg:#e9eff8; --muted:#7f8b9c; --faint:#5b6675;
-    --accent:#5eead4; --link:#7aa2ff;
-    --bad:#f87171; --ok:#4ade80;
-    --mono:ui-monospace,"Cascadia Code","JetBrains Mono",Consolas,monospace;
-  }
-  *{box-sizing:border-box}
-  html,body{height:100%}
-  body{
-    margin:0;background:var(--bg);color:var(--fg);
-    font:15px/1.7 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
-    display:flex;flex-direction:column;overflow:hidden;
-    -webkit-font-smoothing:antialiased;
-  }
-  button{font:inherit;color:inherit}
-  header.top{display:flex;align-items:center;gap:10px;padding:14px 22px;flex:0 0 auto}
-  .brand{font-weight:650;letter-spacing:.08em;font-size:13px}
-  .brand span{color:var(--faint);font-weight:400;letter-spacing:0;margin-left:8px}
-  .grow{flex:1}
-  .status{
-    display:flex;align-items:center;gap:7px;background:none;border:1px solid var(--line);
-    color:var(--muted);font-size:12px;padding:4px 10px;border-radius:99px;cursor:pointer;
-  }
-  .status:hover{color:var(--fg);border-color:#2b3542}
-  .status i{width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok)}
-  .status.bad i{background:var(--bad);box-shadow:0 0 8px var(--bad)}
-  .icon{width:32px;height:32px;display:grid;place-items:center;background:none;border:1px solid transparent;border-radius:9px;color:var(--muted);cursor:pointer}
-  .icon:hover{background:var(--surface);color:var(--fg)}
-  main.stage{flex:1;display:flex;flex-direction:column;min-height:0;align-items:center}
-  #thread{
-    width:100%;max-width:780px;flex:1;overflow-y:auto;padding:8px 24px 24px;
-    display:flex;flex-direction:column;gap:22px;scroll-behavior:smooth;
-  }
-  .hero{margin:auto;text-align:center;padding:24px 8px 12px;max-width:560px}
-  .hero h1{font-size:26px;font-weight:600;margin:0 0 8px}
-  .hero p{color:var(--muted);margin:0 0 26px;font-size:14px}
-  .suggest{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
-  .suggest button{background:var(--surface);border:1px solid var(--line);color:var(--muted);padding:7px 13px;border-radius:99px;font-size:12.5px;cursor:pointer}
-  .suggest button:hover{color:var(--fg);border-color:#2b3542}
-  .turn{display:flex;flex-direction:column;gap:6px;animation:in .18s ease}
-  @keyframes in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
-  .turn.user{align-items:flex-end}
-  .turn.user .body{background:var(--surface);border:1px solid var(--line);border-radius:14px 14px 4px 14px;padding:9px 14px;max-width:86%;color:#dbe4f0;white-space:pre-wrap}
-  .turn.ai .body{max-width:100%}
-  .turn .who{display:none}
-  .turn .body p{margin:0 0 10px}
-  .turn .body p:last-child{margin-bottom:0}
-  .turn .body code{font-family:var(--mono);font-size:12.5px;background:#0e1218;border:1px solid var(--line);border-radius:5px;padding:1px 5px}
-  .turn .body pre{background:#0e1218;border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto;font-family:var(--mono);font-size:12.5px}
-  .turn .body b{color:#fff;font-weight:600}
-  .turn .body .h{display:block;margin:12px 0 4px;color:var(--accent);font-weight:600;font-size:13.5px}
-  .turn .body ul{margin:4px 0 10px;padding-left:20px}
-  .wikilink{color:var(--link);border-bottom:1px dotted currentColor}
-  .cites{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
-  .cite{background:#0f141a;border:1px solid var(--line);color:var(--muted);font-size:11.5px;padding:2px 9px;border-radius:99px;cursor:pointer}
-  .cite:hover{color:var(--accent);border-color:#2f5b54}
-  .bar{height:2px;background:#1a2029;border-radius:99px;overflow:hidden;margin-top:10px}
-  .bar span{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--link));transition:width .3s}
-  .stage-line{font-size:12px;color:var(--muted);margin-top:6px}
-  .spin{display:inline-block;width:9px;height:9px;border:1.5px solid #2b3a48;border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite;margin-right:7px;vertical-align:0}
-  @keyframes sp{to{transform:rotate(360deg)}}
-  .card{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-top:12px;background:var(--bg-soft)}
-  .card .t{font-size:13px;font-weight:600;margin-bottom:4px}
-  .card .m{font-size:12px;color:var(--muted)}
-  .tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
-  .tag{font-size:11px;padding:1px 8px;border-radius:99px;background:#161d27;color:#9fb2c9;border:1px solid #232c38}
-  .composer{width:100%;max-width:780px;padding:0 24px 20px;flex:0 0 auto;background:linear-gradient(180deg,transparent,var(--bg) 22%)}
-  .field{display:flex;align-items:flex-end;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:9px 10px 9px 16px;transition:border-color .15s,box-shadow .15s}
-  .field:focus-within{border-color:#2f5b54;box-shadow:0 0 0 3px #5eead412}
-  #input{flex:1;resize:none;border:0;outline:0;background:transparent;color:var(--fg);font:15px/1.65 inherit;min-height:26px;max-height:190px;padding:3px 0}
-  #input::placeholder{color:var(--faint)}
-  .iconbtn{width:34px;height:34px;border-radius:10px;border:0;background:transparent;color:var(--muted);display:grid;place-items:center;cursor:pointer;flex:0 0 auto}
-  .iconbtn:hover{background:#1a2029;color:var(--fg)}
-  .iconbtn.rec{color:var(--bad);background:#2a1618;animation:pulse 1.2s infinite}
-  @keyframes pulse{50%{opacity:.55}}
-  .send{width:34px;height:34px;border-radius:10px;border:0;cursor:pointer;flex:0 0 auto;background:var(--accent);color:#06231f;font-size:16px;font-weight:700}
-  .send:disabled{opacity:.35;cursor:default}
-  .hintline{display:flex;justify-content:space-between;gap:10px;margin-top:8px;font-size:11.5px;color:var(--faint)}
-  kbd{font-family:var(--mono);font-size:10.5px;border:1px solid var(--line);border-radius:4px;padding:1px 4px;color:var(--muted)}
-  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(420px,100vw);background:var(--bg-soft);border-left:1px solid var(--line);transform:translateX(102%);transition:transform .22s ease;display:flex;flex-direction:column;z-index:30}
-  .drawer.open{transform:none}
-  .drawer header{display:flex;align-items:center;gap:6px;padding:12px 14px;border-bottom:1px solid var(--line)}
-  .seg{display:flex;gap:2px;flex:1}
-  .seg button{background:none;border:0;color:var(--muted);font-size:12.5px;padding:5px 10px;border-radius:7px;cursor:pointer}
-  .seg button.on{background:#182029;color:var(--accent)}
-  .pane{flex:1;overflow:auto;padding:14px;display:none}
-  .pane.on{display:block}
-  .row{padding:9px 10px;border-radius:9px;cursor:pointer;border:1px solid transparent}
-  .row:hover{background:#141a22}
-  .row.on{background:#141f2b;border-color:#27405a}
-  .row .t{font-size:12.5px;color:#d7e3f2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .row .m{font-size:11px;color:var(--faint);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .tool{display:flex;align-items:center;gap:9px;padding:9px 4px;border-bottom:1px solid #171d25;font-size:12.5px}
-  .tool:last-child{border-bottom:0}
-  .dot{width:6px;height:6px;border-radius:50%;background:var(--ok);flex:0 0 auto}
-  .dot.off{background:var(--bad)}
-  .tool .name{flex:1}
-  .tool .kind{font-size:10.5px;color:var(--faint);font-family:var(--mono)}
-  canvas{width:100%;height:100%;display:block;border-radius:10px;background:#0a0d12}
-  .palette{position:fixed;inset:0;background:rgba(5,7,10,.6);backdrop-filter:blur(4px);display:none;align-items:flex-start;justify-content:center;padding-top:16vh;z-index:40}
-  .palette.open{display:flex}
-  .palette .box{width:min(560px,92vw);background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.55)}
-  .palette input{width:100%;border:0;outline:0;background:transparent;color:var(--fg);font:15px inherit;padding:14px 16px;border-bottom:1px solid var(--line)}
-  .palette .list{max-height:320px;overflow:auto;padding:6px}
-  .cmd{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:8px;cursor:pointer;font-size:13.5px;color:#d7e3f2}
-  .cmd .g{color:var(--muted);width:18px;text-align:center}
-  .cmd.sel,.cmd:hover{background:#1a2230}
-  #modal{position:fixed;inset:0;background:rgba(5,7,10,.72);backdrop-filter:blur(3px);display:none;z-index:50;align-items:center;justify-content:center}
-  #modal.on{display:flex}
-  .sheet{width:min(820px,92vw);max-height:84vh;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
-  .sheet header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--bg-soft)}
-  .sheet header .t{font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px}
-  .sheet header .m{font:11px var(--mono);color:var(--faint)}
-  .sheet .x{border:0;background:none;color:var(--muted);font-size:18px;cursor:pointer}
-  .sheet .doc{overflow:auto;padding:20px 24px;font-size:13.5px;line-height:1.8}
-  .sheet footer{padding:10px 16px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px}
-  .btn{background:#1a2230;color:var(--accent);border:1px solid #2c4356;border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer}
-  .btn:hover{border-color:var(--accent)}
-  #toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%) translateY(8px);background:#1c232d;border:1px solid var(--line);color:#dbe4f0;font-size:12.5px;padding:8px 14px;border-radius:10px;opacity:0;pointer-events:none;transition:.2s;z-index:60}
-  #toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
-  ::-webkit-scrollbar{width:8px;height:8px}
-  ::-webkit-scrollbar-thumb{background:#20262f;border-radius:8px}
-
-  /* ---------- 图谱交互 ---------- */
-  .drawer.graph{width:min(1080px,96vw)}
-  .drawer.graph.full{width:100vw;border-left:0}
-
-  #pane-graph{padding:0;position:relative;overflow:hidden}
-  #pane-graph canvas{position:absolute;inset:0;width:100%;height:100%;border-radius:0}
-  .gtools{position:absolute;top:10px;left:10px;display:flex;gap:3px;align-items:center;
-    background:rgba(16,19,24,.9);border:1px solid var(--line);border-radius:9px;padding:3px 5px;z-index:3}
-  .gtools button{border:0;background:none;color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:14px}
-  .gtools button:hover{background:#1a2230;color:var(--fg)}
-  .gtools .wide{width:auto;padding:0 8px;font-size:11.5px}
-  #gzoom{font:11px var(--mono);color:var(--faint);min-width:36px;text-align:center}
-  #gsearch{position:absolute;top:10px;right:10px;width:118px;background:rgba(16,19,24,.9);
-    border:1px solid var(--line);border-radius:8px;color:var(--fg);font-size:12px;padding:5px 9px;outline:0;z-index:3}
-  #gfilter{position:absolute;top:44px;right:10px;background:rgba(16,19,24,.9);border:1px solid var(--line);
-    color:var(--muted);border-radius:8px;font-size:11.5px;padding:4px 6px;z-index:3}
-  .gcard{position:absolute;left:10px;right:10px;bottom:10px;background:rgba(16,19,24,.95);
-    border:1px solid var(--line);border-radius:11px;padding:10px 12px;display:none;z-index:3}
-  .gcard.on{display:block}
-  .gcard .hd{display:flex;align-items:baseline;gap:8px}
-  .gcard .hd .n{font-weight:600;font-size:13.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .gcard .hd .t{font-size:10.5px;color:var(--faint);font-family:var(--mono)}
-  .gcard .mm{font-size:11.5px;color:var(--muted);margin-top:3px;max-height:34px;overflow:hidden}
-  .gcard .acts{display:flex;gap:6px;margin-top:8px}
-  .gcard .acts button{background:#1a2230;border:1px solid #2c4356;color:var(--accent);border-radius:7px;font-size:11.5px;padding:3px 9px;cursor:pointer}
-  .gcard .acts button:hover{border-color:var(--accent)}
-  .nbrow{display:flex;align-items:center;gap:8px;font-size:11.5px;color:#c4d2e2;padding:2px 0}
-  .nbrow span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .nbrow .cut{background:none;border:0;color:var(--faint);font-size:11px;cursor:pointer}
-  .nbrow .cut:hover{color:var(--bad)}
-  #gcNb{margin-top:6px;max-height:96px;overflow:auto}
-
-  @media (max-width:640px){
-    .hintline .opt{display:none}
-    .hintline{font-size:11px}
-    .send svg{display:block;margin:auto}
-    .iconbtn svg,.icon svg{display:block}
-    #thread{padding:4px 16px 16px}
-    .composer{padding:0 16px 14px}
-    .hero h1{font-size:22px}
-    header.top{padding:10px 14px}
-  }
-</style>
+<meta name="apple-mobile-web-app-title" content="OPC" />
+<title>OPC · 第二大脑</title>
+<link rel="stylesheet" href="/static/app.css?v=0.9.9-1" />
 </head>
 <body>
+<svg xmlns="http://www.w3.org/2000/svg" class="sprite" aria-hidden="true">
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="M4 13h4l2 3h4l2-3h4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+  <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="M20 11.5 12.5 19a5 5 0 0 1-7-7L13 4.5a3.5 3.5 0 0 1 5 5L10.5 17a2 2 0 0 1-3-3l7-7"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8 9h8M8 13h8M8 17h5"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></symbol>
+  <symbol id="i-graph" viewBox="0 0 24 24"><circle cx="6" cy="17" r="2.2"/><circle cx="12" cy="6" r="2.2"/><circle cx="19" cy="15" r="2.2"/><path d="m7.8 15.4 3-7.4M13.8 7.6l3.5 5.6M8.2 17.2l8.6-1.6"/></symbol>
+  <symbol id="i-source" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="12" rx="1.5"/><path d="M16 8V4H5v12h3"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 6.3"/><path d="M20 4v7h-7"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M6 4h11l2 2v14H6z"/><path d="M9 4v6h7V4M9 20v-6h7v6"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/><path d="M10 11v5M14 11v5"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="m4 20 4.5-1 10-10-3.5-3.5-10 10z"/><path d="m13.5 7 3.5 3.5"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5H5V6h5"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 7 4 12l5 5"/><path d="M4 12h9a6 6 0 0 1 6 6"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 1 0-5.7l2-2a4 4 0 0 1 5.7 5.7l-1.2 1.2"/><path d="M14 10a4 4 0 0 1 0 5.7l-2 2a4 4 0 0 1-5.7-5.7l1.2-1.2"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 3 20h18z"/><path d="M12 9v5M12 17v.1"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 16l.9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9z"/></symbol>
+  <symbol id="i-command" viewBox="0 0 24 24"><path d="M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3z"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.2" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 5h16l-6 7v6l-4 2v-8z"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M9 4H4v5M15 4h5v5M15 20h5v-5M9 20H4v-5"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-zoom-in" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M11 8v6M8 11h6M16 16l4.5 4.5"/></symbol>
+  <symbol id="i-zoom-out" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M8 11h6M16 16l4.5 4.5"/></symbol>
+  <symbol id="i-wifi-off" viewBox="0 0 24 24"><path d="M3 5l18 14M8.5 12.5a6 6 0 0 1 7-.5M5 9a12 12 0 0 1 14-.5M12 19h.1"/></symbol>
+  <symbol id="i-thumb-up" viewBox="0 0 24 24"><path d="M7 10v10H4V10zM7 10l4-6c1.2 0 2 .8 2 2v3h5a2 2 0 0 1 2 2.3l-1.3 6A2 2 0 0 1 16.7 21H7"/></symbol>
+  <symbol id="i-thumb-down" viewBox="0 0 24 24"><path d="M17 14V4h3v10zM17 14l-4 6c-1.2 0-2-.8-2-2v-3H6a2 2 0 0 1-2-2.3l1.3-6A2 2 0 0 1 7.3 3H17"/></symbol>
+  <symbol id="i-list-plus" viewBox="0 0 24 24"><path d="M4 6h10M4 12h10M4 18h6M18 13v7M14.5 16.5h7"/></symbol>
+  <symbol id="i-map" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="19" cy="16" r="2"/><path d="M8 17 10 8M13.5 7.5l4 7M8 18h9"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z"/><circle cx="12" cy="12" r="2.5"/></symbol>
+  <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
+  <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M4 9a12 12 0 0 1 16 0M7 12.5a8 8 0 0 1 10 0M10 16a3.5 3.5 0 0 1 4 0M12 19h.1"/></symbol>
+</svg>
+
 <header class="top">
-  <div class="brand">OPC<span>第二大脑</span></div>
+  <a class="brand" href="/" title="OPC 首页">
+    <img src="/static/logo.svg" alt="" width="28" height="28" />
+    <span class="brand-text">OPC<em>第二大脑</em></span>
+  </a>
   <div class="grow"></div>
-  <button class="status" id="statusBtn"><i></i><span id="statusText">连接中</span></button>
-  <button class="icon" id="drawerBtn" title="抽屉"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+  <button class="pill-btn" id="attentionBtn" title="待处理" data-track="open_inbox">
+    <svg class="i"><use href="#i-inbox"/></svg>
+    <span class="pill-label">待处理</span>
+    <b class="badge" id="attentionCount" hidden>0</b>
+  </button>
+  <button class="pill-btn" id="searchBtn" title="搜索知识库 (Ctrl/⌘ K)" data-track="open_search">
+    <svg class="i"><use href="#i-search"/></svg>
+    <span class="pill-label">搜索</span>
+    <kbd class="kbd-hide">⌘K</kbd>
+  </button>
+  <button class="icon-btn" id="settingsBtn" title="设置与连接器" aria-label="设置" data-track="open_settings">
+    <svg class="i"><use href="#i-settings"/></svg>
+  </button>
+  <button class="icon-btn" id="drawerBtn" title="打开侧栏" aria-label="打开侧栏" data-track="open_drawer">
+    <svg class="i"><use href="#i-panel"/></svg>
+  </button>
 </header>
 
 <main class="stage">
-  <div id="thread"></div>
-  <form class="composer" id="composer">
-    <div class="field">
-      <textarea id="input" rows="1" placeholder="说点什么，或按 / 打开命令"></textarea>
-      <button type="button" class="iconbtn" id="mic" title="语音（点一下开始，再点结束）"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
-      <button class="send" id="send" title="发送 (Enter)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+  <div id="thread" aria-live="polite" aria-relevant="additions text"></div>
+
+  <div id="stopBar" class="stop-bar" hidden>
+    <span class="spin"></span><span id="stopText">正在生成回答…</span>
+    <button type="button" class="btn ghost" id="stopBtn">停止</button>
+  </div>
+
+  <div id="taskStrip" class="task-strip" hidden></div>
+
+  <form class="composer" id="composer" autocomplete="off">
+    <div class="intent-row" id="intentRow" role="tablist" aria-label="输入意图">
+      <button type="button" class="intent" data-intent="auto" role="tab" aria-selected="true" data-track="intent" data-id="auto">自动</button>
+      <button type="button" class="intent" data-intent="note" role="tab" aria-selected="false" data-track="intent" data-id="note">记</button>
+      <button type="button" class="intent" data-intent="ask" role="tab" aria-selected="false" data-track="intent" data-id="ask">问</button>
+      <button type="button" class="intent" data-intent="do" role="tab" aria-selected="false" data-track="intent" data-id="do">做</button>
+      <span class="intent-spacer"></span>
+      <span class="route-hint" id="routeHint">自动判断「记」或「问」</span>
+    </div>
+    <div class="field" id="field">
+      <textarea id="input" rows="1" placeholder="说点什么，或按 / 打开命令" enterkeyhint="send"></textarea>
+      <div class="field-actions">
+        <button type="button" class="icon-btn sm" id="attach" data-track="attach" title="上传文件" aria-label="上传文件">
+          <svg class="i"><use href="#i-paperclip"/></svg>
+        </button>
+        <button type="button" class="icon-btn sm" id="anno" data-track="annotate" title="随手注记（带当前锚点）" aria-label="随手注记">
+          <svg class="i"><use href="#i-note"/></svg>
+        </button>
+        <button type="button" class="icon-btn sm" id="mic" data-track="voice" title="语音输入" aria-label="语音输入">
+          <svg class="i"><use href="#i-mic"/></svg>
+        </button>
+        <button class="send" id="send" data-track="send" title="发送 (Enter)" aria-label="发送">
+          <svg class="i"><use href="#i-send"/></svg>
+        </button>
+      </div>
     </div>
     <div class="hintline">
-      <span><kbd>/</kbd> 命令 · <kbd>Ctrl</kbd>+<kbd>K</kbd> 面板 · 自动判断「记」或「问」</span>
-      <span id="hintRight" class="opt">—</span>
+      <span><kbd>Enter</kbd> 发送<span class="hint-extra"> · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行 · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> 强制提问</span> · <kbd>/</kbd> 命令</span>
+      <span id="pulseLine" class="opt">连接中…</span>
     </div>
   </form>
 </main>
 
-<aside class="drawer" id="drawer">
-  <header>
-    <div class="seg" id="seg">
-      <button data-pane="conv" class="on">对话</button>
-      <button data-pane="graph">图谱</button>
-      <button data-pane="sources">来源</button>
-      <button data-pane="tools">工具</button>
+<aside class="drawer" id="drawer" aria-label="侧栏">
+  <header class="drawer-head">
+    <div class="seg" id="seg" role="tablist">
+      <button data-pane="conv" class="on" role="tab" data-track="pane" data-id="conv">对话</button>
+      <button data-pane="graph" role="tab" data-track="pane" data-id="graph">图谱</button>
+      <button data-pane="sources" role="tab" data-track="pane" data-id="sources">来源</button>
+      <button data-pane="notes" role="tab" data-track="pane" data-id="notes">注记</button>
+      <button data-pane="inbox" role="tab" data-track="pane" data-id="inbox">待办</button>
+      <button data-pane="ontology" role="tab" data-track="pane" data-id="ontology">本体</button>
     </div>
-    <button class="icon" id="drawerClose">×</button>
+    <button class="icon-btn" id="drawerClose" aria-label="关闭侧栏">
+      <svg class="i"><use href="#i-x"/></svg>
+    </button>
   </header>
   <div class="pane on" id="pane-conv"></div>
   <div class="pane" id="pane-graph">
     <div class="gtools">
-      <button data-g="out" title="缩小">−</button>
-      <button data-g="in" title="放大">+</button>
-      <button class="wide" data-g="fit" title="适配窗口">适配</button>
-      <button data-g="full" title="全屏">⛶</button>
-      <button data-g="undo" title="撤销上一步">↶</button>
+      <button data-g="out" title="缩小" aria-label="缩小"><svg class="i"><use href="#i-zoom-out"/></svg></button>
+      <button data-g="in" title="放大" aria-label="放大"><svg class="i"><use href="#i-zoom-in"/></svg></button>
+      <button data-g="fit" title="适配窗口" aria-label="适配窗口"><svg class="i"><use href="#i-fit"/></svg></button>
+      <button data-g="full" title="全屏" aria-label="全屏"><svg class="i"><use href="#i-expand"/></svg></button>
+      <button data-g="undo" title="撤销上一步" aria-label="撤销"><svg class="i"><use href="#i-undo"/></svg></button>
+      <span class="sep"></span>
+      <select id="gmode" title="图谱范围">
+        <option value="lite">精简</option>
+        <option value="full">全图</option>
+      </select>
+      <select id="gedge" title="关系类型">
+        <option value="all">全部关系</option>
+        <option value="evidence">只看证据</option>
+        <option value="structure">只看结构</option>
+      </select>
+      <select id="gfilter" title="节点类型">
+        <option value="all">全部节点</option>
+        <option value="entity">实体</option>
+        <option value="concept">概念</option>
+        <option value="source">来源</option>
+      </select>
       <span id="gzoom">100%</span>
     </div>
-    <canvas id="canvas"></canvas>
-    <input id="gsearch" placeholder="搜节点" />
-    <select id="gfilter">
-      <option value="">全部</option>
-      <option value="entity">实体</option>
-      <option value="concept">概念</option>
-      <option value="source">来源</option>
-    </select>
-    <div class="gcard" id="gcard">
-      <div class="hd"><span class="n" id="gcName"></span><span class="t" id="gcType"></span></div>
-      <div class="mm" id="gcMeta"></div>
-      <div class="acts" id="gcActs"></div>
-      <div id="gcNb"></div>
+    <canvas id="canvas" tabindex="0" aria-label="知识图谱画布"></canvas>
+    <input id="gsearch" placeholder="搜节点" aria-label="搜索节点" />
+    <div class="glegend" aria-hidden="true">
+      <span><i class="dot entity"></i>实体</span>
+      <span><i class="dot concept"></i>概念</span>
+      <span><i class="dot source"></i>来源</span>
+      <span><i class="line co"></i>共现证据</span>
+    </div>
+    <div class="gmeta" id="gmeta"></div>
+    <div class="gcard" id="gcard" hidden>
+      <div class="gcard-head">
+        <div class="gcard-title"><span id="gcName"></span><span class="gcard-type" id="gcType"></span></div>
+        <button class="icon-btn sm" id="gcClose" aria-label="关闭详情"><svg class="i"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="gcard-meta" id="gcMeta"></div>
+      <div class="gcard-acts" id="gcActs"></div>
+      <div class="gcard-nb" id="gcNb"></div>
     </div>
   </div>
   <div class="pane" id="pane-sources"></div>
-  <div class="pane" id="pane-tools"></div>
+  <div class="pane" id="pane-notes"></div>
+  <div class="pane" id="pane-inbox"></div>
+  <div class="pane" id="pane-ontology"></div>
 </aside>
 
-<div class="palette" id="palette">
-  <div class="box">
-    <input id="paletteInput" placeholder="输入命令：导入会议、日报、体检、图谱、新对话…" autocomplete="off" />
-    <div class="list" id="paletteList"></div>
-  </div>
-</div>
-
-<div id="modal">
-  <div class="sheet">
-    <header>
-      <div class="t" id="modalTitle">笔记</div>
-      <div class="m" id="modalMeta"></div>
-      <button class="x" id="modalClose">×</button>
-    </header>
-    <div class="doc" id="modalBody"></div>
-    <footer>
-      <button class="btn" id="modalOpen">在 Obsidian 打开</button>
-      <button class="btn" id="modalAsk">就这条继续问</button>
-    </footer>
-  </div>
-</div>
-
-<div id="toast"></div>
-
-<script>
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
-
-const $ = (s, r = document) => r.querySelector(s);
-const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
-const thread = $("#thread"), input = $("#input"), sendBtn = $("#send");
-
-const TOKEN_KEY = "opc_token";
-const getToken = () => localStorage.getItem(TOKEN_KEY) || "";
-(function adoptToken() {
-  const u = new URL(location.href).searchParams.get("token");
-  if (u) { localStorage.setItem(TOKEN_KEY, u); history.replaceState({}, "", location.pathname + location.hash); }
-})();
-const authHeaders = (extra) => {
-  const t = getToken();
-  return t ? Object.assign({}, extra, { "X-OPC-Token": t }) : (extra || {});
-};
-
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-
-function md(src) {
-  let h = esc(src || "");
-  h = h.replace(/```([\s\S]*?)```/g, (_, c) => `<pre>${c.trim()}</pre>`);
-  h = h.replace(/`([^`]+)`/g, "<code>$1</code>");
-  h = h.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-  h = h.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '<span class="wikilink">$2</span>');
-  h = h.replace(/\[\[([^\]]+)\]\]/g, '<span class="wikilink">$1</span>');
-  h = h.replace(/^### (.+)$/gm, '<span class="h">$1</span>');
-  h = h.replace(/^## (.+)$/gm, '<span class="h">$1</span>');
-  h = h.replace(/^[-*] (.+)$/gm, "<li>$1</li>");
-  h = h.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, "<ul>$1</ul>");
-  h = h.replace(/\n{2,}/g, "</p><p>");
-  h = h.replace(/\n/g, "<br>");
-  return `<p>${h}</p>`;
-}
-
-function toast(msg, ms = 2200) {
-  const el = $("#toast");
-  el.textContent = msg;
-  el.classList.add("on");
-  clearTimeout(el._t);
-  el._t = setTimeout(() => el.classList.remove("on"), ms);
-}
-
-async function api(path, opts = {}) {
-  const headers = authHeaders({ "Content-Type": "application/json" });
-  const r = await fetch(path, { ...opts, headers });
-  if (r.status === 401) {
-    const t = prompt("需要访问令牌：在电脑上运行 python -m opc token 后粘贴进来");
-    if (t) { localStorage.setItem(TOKEN_KEY, t.trim()); location.reload(); }
-    throw new Error("需要访问令牌");
-  }
-  const txt = await r.text();
-  let data; try { data = JSON.parse(txt); } catch { data = txt; }
-  if (!r.ok) throw new Error((data && data.detail) || r.statusText);
-  return data;
-}
-
-function turn(role) {
-  const el = document.createElement("div");
-  el.className = "turn " + role;
-  el.innerHTML = `<div class="body"></div>`;
-  thread.appendChild(el);
-  thread.scrollTop = thread.scrollHeight;
-  return el.querySelector(".body");
-}
-const sayUser = (t) => { turn("user").textContent = t; };
-const sayAI = () => turn("ai");
-function sysLine(text) {
-  const el = document.createElement("div");
-  el.className = "turn";
-  el.innerHTML = `<div class="body" style="color:var(--faint);font-size:12px">${esc(text)}</div>`;
-  thread.appendChild(el);
-  thread.scrollTop = thread.scrollHeight;
-}
-
-function citesHtml(cites) {
-  if (!cites || !cites.length) return "";
-  return `<div class="cites">` + cites.map((c) =>
-    `<button class="cite" data-c="${encodeURIComponent(JSON.stringify(c))}">[${c.n}] ${esc(c.title)}</button>`).join("") + `</div>`;
-}
-const parseCite = (el) => { try { return JSON.parse(decodeURIComponent(el.dataset.c)); } catch { return null; } };
-
-function resultCard(r) {
-  const ents = (r.entities || []).map((e) => `<span class="tag">${esc(e.name)}</span>`).join("");
-  const cons = (r.concepts || []).map((c) => `<span class="tag">${esc(c.name)}</span>`).join("");
-  const kp = (r.key_points || []).map((p) => `<div>· ${esc(p)}</div>`).join("");
-  return `${r.summary ? md(r.summary) : ""}
-    ${kp ? `<div class="card"><div class="m">${kp}</div></div>` : ""}
-    <div class="card">
-      <div class="t">${esc(r.title || "")}</div>
-      <div class="m">${esc(r.path || "")}${r.actions && r.actions.length ? ` · 行动项 ${r.actions.length} 条` : ""}</div>
-      <div class="tags">${ents}${cons}</div>
-    </div>`;
-}
-
-let tools = [];
-async function loadStatus() {
-  try {
-    const s = await api("/api/status");
-    tools = s.tools || [];
-    const ok = tools.filter((t) => t.ok).length;
-    $("#statusText").textContent = `${ok}/${tools.length} 工具`;
-    $("#statusBtn").classList.toggle("bad", ok < tools.length);
-    $("#hintRight").textContent = `来源 ${s.stats.sources} · 实体 ${s.stats.entities} · 关系 ${s.stats.edges}`;
-    renderTools();
-    return s;
-  } catch {
-    $("#statusText").textContent = "离线";
-    $("#statusBtn").classList.add("bad");
-    return null;
-  }
-}
-function renderTools() {
-  $("#pane-tools").innerHTML = tools.map((t) => `
-    <div class="tool">
-      <span class="dot ${t.ok ? "" : "off"}"></span>
-      <span class="name">${esc(t.name)}</span>
-      <span class="kind">${esc(t.kind)}</span>
+<div class="palette" id="palette" role="dialog" aria-modal="true" aria-label="命令与搜索">
+  <div class="palette-box">
+    <div class="palette-tabs">
+      <button class="ptab on" data-mode="cmd" data-track="palette_tab" data-id="cmd">命令</button>
+      <button class="ptab" data-mode="search" data-track="palette_tab" data-id="search">知识库</button>
+      <span class="palette-hint" id="paletteHint">↑↓ 选择 · Enter 打开 · Esc 关闭</span>
     </div>
-    <div class="m" style="color:var(--faint);font-size:11px;padding:0 0 8px 15px">${esc(t.detail)}</div>`).join("");
-}
+    <input id="paletteInput" placeholder="输入命令，或搜索知识库…" autocomplete="off" />
+    <div class="palette-list" id="paletteList"></div>
+  </div>
+</div>
 
-let convId = null;
-let threadHistory = [];
+<div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div class="sheet" id="sheet">
+    <header class="sheet-head">
+      <div class="sheet-title" id="modalTitle">详情</div>
+      <div class="sheet-meta" id="modalMeta"></div>
+      <button class="icon-btn" id="modalClose" aria-label="关闭"><svg class="i"><use href="#i-x"/></svg></button>
+    </header>
+    <div class="sheet-body" id="modalBody"></div>
+    <footer class="sheet-foot" id="modalFoot"></footer>
+  </div>
+</div>
 
-async function doAsk(q) {
-  const body = sayAI();
-  body.innerHTML = `<span class="spin"></span><span style="color:var(--muted)">检索知识库…</span>`;
-  let text = "";
-  const history = threadHistory.slice(-6);
-  try {
-    const res = await fetch("/api/ask/stream", {
-      method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ question: q, history, conversation_id: convId }),
-    });
-    if (!res.ok || !res.body) throw new Error("HTTP " + res.status);
-    const reader = res.body.getReader();
-    const dec = new TextDecoder();
-    let buf = "", cites = [];
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const parts = buf.split("\n\n");
-      buf = parts.pop() || "";
-      for (const part of parts) {
-        const line = part.split("\n").find((l) => l.startsWith("data: "));
-        if (!line) continue;
-        let d; try { d = JSON.parse(line.slice(6)); } catch { continue; }
-        if (d.type === "conversation") convId = d.id;
-        else if (d.type === "citations") cites = d.citations || [];
-        else if (d.type === "status") { body.innerHTML = `<span class="spin"></span><span style="color:var(--muted)">${esc(d.text)}</span>`; }
-        else if (d.type === "delta") { text += d.text; body.innerHTML = md(text); thread.scrollTop = thread.scrollHeight; }
-        else if (d.type === "error") body.innerHTML += `<div style="color:var(--bad)">${esc(d.text)}</div>`;
-        else if (d.type === "done") body.innerHTML = md(text) + citesHtml(cites);
-      }
-    }
-    if (!text) body.innerHTML = `<span style="color:var(--bad)">没有返回内容</span>`;
-    else { threadHistory.push({ role: "user", content: q }, { role: "assistant", content: text }); }
-  } catch (e) {
-    body.innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`;
-  }
-  loadConversations();
-}
+<div class="drop-zone" id="dropZone" hidden>
+  <div class="drop-card">
+    <svg class="i lg"><use href="#i-paperclip"/></svg>
+    <b>松手即可入库</b>
+    <span>支持 md / txt / pdf / docx / pptx / xlsx</span>
+  </div>
+</div>
 
-async function doCapture(text) {
-  const body = sayAI();
-  body.innerHTML = `<span class="spin"></span><span style="color:var(--muted)">提交任务…</span>`;
-  try {
-    const r = await api("/api/capture?background=true", { method: "POST", body: JSON.stringify({ text }) });
-    if (!r.job_id) throw new Error("任务提交失败");
-    let job = null;
-    for (let i = 0; i < 200; i++) {
-      await new Promise((res) => setTimeout(res, 1200));
-      job = await api("/api/jobs/" + r.job_id);
-      const pct = Math.max(2, job.progress || 0);
-      body.innerHTML = `<div class="bar"><span style="width:${pct}%"></span></div><div class="stage-line">${esc(job.stage || "排队中")} · ${pct}%</div>`;
-      if (job.status === "done" || job.status === "failed") break;
-    }
-    if (!job || job.status === "failed") {
-      body.innerHTML = `<span style="color:var(--bad)">失败：${esc((job && job.error) || "未知错误")}</span>`;
-      return;
-    }
-    body.innerHTML = resultCard(job.result || {});
-    loadStatus(); loadSources();
-  } catch (e) {
-    body.innerHTML = `<span style="color:var(--bad)">失败：${esc(e.message)}</span>`;
-  }
-}
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="srLive" class="sr-only" aria-live="polite"></div>
+<input type="file" id="fileInput" hidden multiple />
 
-let recorder = null, chunks = [];
-async function toggleMic() {
-  const btn = $("#mic");
-  if (recorder && recorder.state === "recording") { recorder.stop(); return; }
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    recorder = new MediaRecorder(stream);
-    chunks = [];
-    recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-    recorder.onstop = async () => {
-      stream.getTracks().forEach((t) => t.stop());
-      btn.classList.remove("rec");
-      await sendVoice(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
-    };
-    recorder.start();
-    btn.classList.add("rec");
-    sysLine("录音中…再点一下结束（最长 60 秒）");
-    setTimeout(() => { if (recorder && recorder.state === "recording") recorder.stop(); }, 60000);
-  } catch (e) { toast("无法访问麦克风：" + e.message); }
-}
-
-async function sendVoice(blob) {
-  const body = sayAI();
-  body.innerHTML = `<span class="spin"></span><span style="color:var(--muted)">上传录音…</span>`;
-  try {
-    const fd = new FormData();
-    fd.append("file", blob, "voice.webm");
-    const r = await fetch("/api/voice", { method: "POST", headers: authHeaders({}), body: fd });
-    if (r.status === 401) { body.innerHTML = "需要访问令牌"; return; }
-    const job = await r.json();
-    let st = null;
-    for (let i = 0; i < 150; i++) {
-      await new Promise((res) => setTimeout(res, 1200));
-      st = await api("/api/jobs/" + job.job_id);
-      const pct = Math.max(2, st.progress || 0);
-      body.innerHTML = `<div class="bar"><span style="width:${pct}%"></span></div><div class="stage-line">${esc(st.stage || "排队中")} · ${pct}%</div>`;
-      if (st.status === "done" || st.status === "failed") break;
-    }
-    if (!st || st.status === "failed") { body.innerHTML = `<span style="color:var(--bad)">失败：${esc((st && st.error) || "")}</span>`; return; }
-    const res = st.result || {};
-    body.innerHTML = md("**转写**\n\n" + (res.transcript || "")) + resultCard(res);
-    loadStatus(); loadSources();
-  } catch (e) { body.innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
-}
-
-async function doMeetings() {
-  const body = sayAI();
-  body.innerHTML = `<span class="spin"></span><span style="color:var(--muted)">读取本地 iMeeting…</span>`;
-  try {
-    const r = await api("/api/meetings?limit=12");
-    const rows = (r.meetings || []).map((m) => `
-      <div class="tool">
-        <span class="name">#${m.id} ${esc(m.title)}</span>
-        <span class="kind">${esc(m.status)} · ${Math.round((m.duration_ms || 0) / 60000)}min</span>
-        <button class="cite" data-ingest="${m.id}">导入</button>
-      </div>`).join("");
-    body.innerHTML = rows || `<span style="color:var(--muted)">暂无会议</span>`;
-    body.querySelectorAll("[data-ingest]").forEach((b) => b.onclick = () => ingestMeeting(Number(b.dataset.ingest), b));
-  } catch (e) { body.innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
-}
-
-async function ingestMeeting(id, btn) {
-  if (btn) { btn.textContent = "排队中"; btn.disabled = true; }
-  const body = sayAI();
-  body.innerHTML = `<span class="spin"></span>会议 #${id} 排队…`;
-  try {
-    const r = await api(`/api/meetings/${id}/ingest?background=true`, { method: "POST" });
-    let job = null;
-    for (let i = 0; i < 300; i++) {
-      await new Promise((res) => setTimeout(res, 1200));
-      job = await api("/api/jobs/" + r.job_id);
-      const pct = Math.max(2, job.progress || 0);
-      body.innerHTML = `<div class="bar"><span style="width:${pct}%"></span></div><div class="stage-line">${esc(job.stage || "处理中")} · ${pct}%</div>`;
-      if (job.status === "done" || job.status === "failed") break;
-    }
-    if (!job || job.status === "failed") throw new Error((job && job.error) || "失败");
-    body.innerHTML = resultCard(job.result || {});
-    loadStatus(); loadSources();
-  } catch (e) { body.innerHTML = `<span style="color:var(--bad)">失败：${esc(e.message)}</span>`; }
-}
-
-async function doSync() {
-  const body = sayAI();
-  body.innerHTML = `<span class="spin"></span>扫描 inbox…`;
-  try {
-    const r = await api("/api/sync", { method: "POST", body: JSON.stringify({ limit: 10 }) });
-    body.innerHTML = (r.results || []).map((x) => `<div class="m">${esc(x.title || x.path)} — ${esc(x.error || (x.skipped ? "未变化" : "已入库"))}</div>`).join("") || "没有新文件";
-    loadStatus(); loadSources();
-  } catch (e) { body.innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
-}
-
-async function doHarvest() {
-  const body = sayAI();
-  body.innerHTML = `<span class="spin"></span>回收 OpenCode 最近会话…`;
-  try {
-    const r = await api("/api/harvest", { method: "POST", body: JSON.stringify({ tool: "opencode", limit: 2 }) });
-    body.innerHTML = (r.results || []).map((x) => `<div class="m">${esc(x.title || x.session || "?")} — ${esc(x.error || "已入库")}</div>`).join("") || "没有可回收会话";
-    loadStatus(); loadSources();
-  } catch (e) { body.innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
-}
-
-async function doDigest() {
-  const body = sayAI();
-  body.innerHTML = `<span class="spin"></span>汇总今天的素材…`;
-  try {
-    const r = await api("/api/digest", { method: "POST" });
-    if (r.skipped) { body.innerHTML = `<span style="color:var(--muted)">这次没有可汇总的新素材</span>`; return; }
-    body.innerHTML = md(`**${r.headline || "日报已生成"}**\n\n写入 \`${r.path}\`\n\n要点 ${r.points || 0} 条 · 来源 ${r.sources || 0} 条`);
-  } catch (e) { body.innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
-}
-
-async function doActions() {
-  const body = sayAI();
-  body.innerHTML = `<span class="spin"></span>汇总行动项…`;
-  try {
-    const r = await api("/api/actions/sync", { method: "POST" });
-    const list = await api("/api/actions?limit=10");
-    const rows = (list.items || []).map((i) => `<div class="m">☐ ${esc(i.text)} <span style="color:var(--faint)">— ${esc(i.note)}</span></div>`).join("");
-    body.innerHTML = md(`已同步到 \`${r.path}\`：待办 ${r.todo} / 完成 ${r.done}`) + rows;
-  } catch (e) { body.innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
-}
-
-async function doLint() {
-  const body = sayAI();
-  body.innerHTML = `<span class="spin"></span>体检中（孤儿 / 断链 / 空壳 / 重复 / 矛盾）…`;
-  try {
-    const r = await api("/api/lint", { method: "POST" });
-    body.innerHTML = md(`**${r.pages} 页**\n\n- 孤儿页 ${r.orphans}\n- 断链页 ${r.broken}\n- 空壳页 ${r.stubs}\n- 疑似重复 ${r.duplicates}\n- 矛盾 ${(r.conflicts || []).length}\n\n报告：\`${r.path}\``);
-  } catch (e) { body.innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
-}
-
-async function doSynthesize(name) {
-  if (!name) { input.value = "/topic "; input.focus(); return; }
-  const body = sayAI();
-  body.innerHTML = `<span class="spin"></span>跨来源综述「${esc(name)}」…`;
-  try {
-    const r = await api("/api/synthesize?name=" + encodeURIComponent(name), { method: "POST" });
-    body.innerHTML = md(`**${r.subject}**（${r.sources} 份来源）\n\n${r.definition}\n\n写入 \`${r.path}\`\n\n时间线 ${r.timeline} 条 · 分歧 ${r.conflicts} 处`);
-  } catch (e) { body.innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
-}
-
-function openDrawer(pane) {
-  $("#drawer").classList.add("open");
-  if (pane) switchPane(pane);
-}
-function closeDrawer() { $("#drawer").classList.remove("open"); }
-function switchPane(name) {
-  $$("#seg button").forEach((b) => b.classList.toggle("on", b.dataset.pane === name));
-  $$(".pane").forEach((p) => p.classList.toggle("on", p.id === "pane-" + name));
-  $("#drawer").classList.toggle("graph", name === "graph");
-  if (name !== "graph") $("#drawer").classList.remove("full");
-  if (name === "graph") setTimeout(drawGraph, 60);
-  if (name === "sources") loadSources();
-  if (name === "conv") loadConversations();
-  if (name === "tools") { renderTools(); loadStatus(); }
-}
-
-async function loadConversations() {
-  const box = $("#pane-conv");
-  try {
-    const r = await api("/api/conversations?limit=40");
-    const items = r.items || [];
-    box.innerHTML = items.map((c) => `
-      <div class="row ${c.id === convId ? "on" : ""}" data-id="${c.id}">
-        <div class="t">${esc(c.title || "未命名")}</div>
-        <div class="m">${c.n} 条 · ${esc(String(c.last || "").slice(0, 38))}</div>
-      </div>`).join("") || `<div class="m">还没有会话</div>`;
-    box.querySelectorAll(".row").forEach((el) => el.onclick = () => openConversation(el.dataset.id));
-  } catch (e) { box.innerHTML = `<div class="m">${esc(e.message)}</div>`; }
-}
-
-async function openConversation(id) {
-  try {
-    const c = await api("/api/conversations/" + id);
-    convId = c.id;
-    threadHistory = [];
-    thread.innerHTML = "";
-    for (const m of c.messages) {
-      if (m.role === "user") { sayUser(m.content); threadHistory.push({ role: "user", content: m.content }); }
-      else { sayAI().innerHTML = md(m.content) + citesHtml(m.citations || []); threadHistory.push({ role: "assistant", content: m.content }); }
-    }
-    closeDrawer();
-    thread.scrollTop = thread.scrollHeight;
-  } catch (e) { toast("载入失败：" + e.message); }
-}
-
-async function loadSources() {
-  try {
-    const rows = await api("/api/sources?limit=40");
-    $("#pane-sources").innerHTML = rows.map((s) => `
-      <div class="row">
-        <div class="t">${esc(s.title)}</div>
-        <div class="m">#${s.id} · ${esc(s.kind)} · ${esc(s.note_path || "未提炼")}</div>
-      </div>`).join("") || `<div class="m">还没有来源</div>`;
-  } catch {}
-}
-
-/* ---------------- 图谱：缩放 / 平移 / 聚焦 / 编辑 ---------------- */
-let G = null;
-const GCOLOR = (gr) => gr === "entity" ? "#5eead4" : gr === "concept" ? "#7aa2ff" : "#94a3b8";
-
-async function drawGraph() {
-  const cv = $("#canvas");
-  if (!cv) return;
-  const rect = cv.getBoundingClientRect();
-  if (!rect.width || !rect.height) return;
-  const dpr = window.devicePixelRatio || 1;
-  cv.width = rect.width * dpr;
-  cv.height = rect.height * dpr;
-  const ctx = cv.getContext("2d");
-  const W = rect.width, H = rect.height;
-
-  let data;
-  try { data = await api("/api/graph?limit=160"); } catch { return; }
-  const nodes = data.nodes.map((n, i) => ({
-    ...n,
-    x: W / 2 + Math.cos(i * 2.399) * Math.min(W, H) * 0.2 + (Math.random() - .5) * 8,
-    y: H / 2 + Math.sin(i * 2.399) * Math.min(W, H) * 0.2 + (Math.random() - .5) * 8,
-    dx: 0, dy: 0,
-  }));
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const links = data.links.filter((l) => byId.has(l.source) && byId.has(l.target))
-    .map((l) => ({ ...l, a: byId.get(l.source), b: byId.get(l.target) }));
-  for (const n of nodes) n.degree = 0;
-  for (const l of links) { l.a.degree++; l.b.degree++; }
-  layoutGraph(nodes, links, W, H);
-
-  G = { cv, ctx, dpr, W, H, nodes, links, byId, scale: 1, tx: 0, ty: 0,
-        selected: null, hover: null, armed: false, drag: null, pan: null, moved: false,
-        q: ($("#gsearch") && $("#gsearch").value || "").trim(),
-        filter: ($("#gfilter") && $("#gfilter").value) || "" };
-  fitGraph();
-  bindGraph();
-  drawGraphFrame();
-}
-
-function layoutGraph(nodes, links, W, H) {
-  const k = Math.sqrt((W * H) / Math.max(nodes.length, 1)) * 0.9;
-  let temp = Math.min(W, H) / 6;
-  for (let t = 0; t < 300; t++) {
-    for (const n of nodes) { n.dx = 0; n.dy = 0; }
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const a = nodes[i], b = nodes[j];
-        let dx = a.x - b.x, dy = a.y - b.y;
-        const d2 = dx * dx + dy * dy;
-        if (d2 > (k * 2.4) ** 2) continue;
-        const d = Math.sqrt(d2) || 0.01;
-        const f = (k * k) / d;
-        dx /= d; dy /= d;
-        a.dx += dx * f; a.dy += dy * f;
-        b.dx -= dx * f; b.dy -= dy * f;
-      }
-    }
-    for (const l of links) {
-      let dx = l.a.x - l.b.x, dy = l.a.y - l.b.y;
-      const d = Math.hypot(dx, dy) || 0.01;
-      const f = (d * d) / k * 0.9;
-      dx /= d; dy /= d;
-      l.a.dx -= dx * f; l.a.dy -= dy * f;
-      l.b.dx += dx * f; l.b.dy += dy * f;
-    }
-    for (const n of nodes) {
-      n.dx += (W / 2 - n.x) * 0.02;
-      n.dy += (H / 2 - n.y) * 0.02;
-      const len = Math.hypot(n.dx, n.dy) || 1;
-      const step = Math.min(len, temp);
-      n.x += (n.dx / len) * step;
-      n.y += (n.dy / len) * step;
-      n.x = Math.max(20, Math.min(W - 20, n.x));
-      n.y = Math.max(20, Math.min(H - 20, n.y));
-    }
-    temp *= 0.97;
-  }
-}
-
-function fitGraph() {
-  if (!G || !G.nodes.length) return;
-  const xs = G.nodes.map((n) => n.x), ys = G.nodes.map((n) => n.y);
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const minY = Math.min(...ys), maxY = Math.max(...ys);
-  const bw = Math.max(maxX - minX, 40), bh = Math.max(maxY - minY, 40);
-  G.scale = Math.min(3, Math.max(0.3, Math.min(G.W / bw, G.H / bh) * 0.82));
-  G.tx = G.W / 2 - (minX + maxX) / 2 * G.scale;
-  G.ty = G.H / 2 - (minY + maxY) / 2 * G.scale;
-  drawGraphFrame();
-}
-
-const g2s = (x, y) => ({ x: x * G.scale + G.tx, y: y * G.scale + G.ty });
-const s2g = (x, y) => ({ x: (x - G.tx) / G.scale, y: (y - G.ty) / G.scale });
-
-function nodeAt(mx, my) {
-  if (!G) return null;
-  const p = s2g(mx, my);
-  let best = null, bd = 14 / G.scale;
-  for (const n of G.nodes) {
-    if (!visibleNode(n)) continue;
-    const d = Math.hypot(n.x - p.x, n.y - p.y);
-    if (d < bd) { bd = d; best = n; }
-  }
-  return best;
-}
-
-function visibleNode(n) {
-  if (!G) return false;
-  if (G.filter === "source") { if (n.group === "entity" || n.group === "concept") return false; }
-  else if (G.filter && n.group !== G.filter) return false;
-  if (G.q && !String(n.label).toLowerCase().includes(G.q.toLowerCase())) return false;
-  return true;
-}
-
-function neighborSet(n) {
-  const s = new Set([n.id]);
-  for (const l of G.links) {
-    if (l.a.id === n.id) s.add(l.b.id);
-    if (l.b.id === n.id) s.add(l.a.id);
-  }
-  return s;
-}
-
-function drawGraphFrame() {
-  if (!G) return;
-  const { ctx, W, H, dpr } = G;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, W, H);
-  const sel = G.selected;
-  const hood = sel ? neighborSet(sel) : null;
-
-  ctx.save();
-  ctx.translate(G.tx, G.ty);
-  ctx.scale(G.scale, G.scale);
-
-  for (const l of G.links) {
-    if (!visibleNode(l.a) || !visibleNode(l.b)) continue;
-    const hot = sel && (l.a.id === sel.id || l.b.id === sel.id);
-    ctx.strokeStyle = hot ? "rgba(94,234,212,.7)"
-      : (l.rel === "co_occurs" ? "rgba(94,234,212,.10)" : "rgba(122,162,255,.16)");
-    ctx.lineWidth = (hot ? 1.8 : 1) / G.scale;
-    ctx.beginPath(); ctx.moveTo(l.a.x, l.a.y); ctx.lineTo(l.b.x, l.b.y); ctx.stroke();
-  }
-
-  for (const n of G.nodes) {
-    if (!visibleNode(n)) continue;
-    const dim = hood && !hood.has(n.id);
-    const r = (n.group === "concept" ? 3.4 : n.group === "entity" ? 4.6 : 5.2)
-      + Math.min(3, (n.degree || 0) / 12);
-    ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 7);
-    ctx.fillStyle = GCOLOR(n.group);
-    ctx.globalAlpha = dim ? 0.25 : 0.95;
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    if (n === sel) {
-      ctx.beginPath(); ctx.arc(n.x, n.y, r + 4, 0, 7);
-      ctx.strokeStyle = "rgba(94,234,212,.85)"; ctx.lineWidth = 1.5 / G.scale; ctx.stroke();
-    }
-  }
-
-  ctx.font = `${11 / G.scale}px -apple-system,Segoe UI,Microsoft YaHei,sans-serif`;
-  for (const n of G.nodes) {
-    if (!visibleNode(n)) continue;
-    const show = n === sel || n === G.hover || (n.degree || 0) >= 8 || (hood && hood.has(n.id));
-    if (!show) continue;
-    ctx.fillStyle = n === sel ? "#e9eff8" : "rgba(226,236,248,.62)";
-    ctx.fillText(String(n.label).slice(0, 16), n.x + 6 / G.scale, n.y + 3 / G.scale);
-  }
-  ctx.restore();
-  const z = $("#gzoom");
-  if (z) z.textContent = Math.round(G.scale * 100) + "%";
-}
-
-function bindGraph() {
-  const cv = G.cv;
-  cv.onwheel = (e) => {
-    e.preventDefault();
-    const r = cv.getBoundingClientRect();
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
-    const before = s2g(mx, my);
-    G.scale = Math.min(4, Math.max(0.25, G.scale * (e.deltaY < 0 ? 1.12 : 0.9)));
-    G.tx = mx - before.x * G.scale;
-    G.ty = my - before.y * G.scale;
-    drawGraphFrame();
-  };
-  cv.onmousedown = (e) => {
-    const r = cv.getBoundingClientRect();
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
-    const n = nodeAt(mx, my);
-    G.moved = false;
-    if (n) G.drag = { node: n, ox: n.x, oy: n.y, mx, my };
-    else G.pan = { tx: G.tx, ty: G.ty, mx, my };
-    cv.style.cursor = n ? "grabbing" : "grabbing";
-  };
-  cv.onmousemove = (e) => {
-    const r = cv.getBoundingClientRect();
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
-    if (G.drag) {
-      const dx = (mx - G.drag.mx) / G.scale, dy = (my - G.drag.my) / G.scale;
-      G.drag.node.x = G.drag.ox + dx;
-      G.drag.node.y = G.drag.oy + dy;
-      if (Math.hypot(dx, dy) > 2) G.moved = true;
-      drawGraphFrame();
-      return;
-    }
-    if (G.pan) {
-      G.tx = G.pan.tx + (mx - G.pan.mx);
-      G.ty = G.pan.ty + (my - G.pan.my);
-      if (Math.abs(mx - G.pan.mx) + Math.abs(my - G.pan.my) > 2) G.moved = true;
-      drawGraphFrame();
-      return;
-    }
-    const n = nodeAt(mx, my);
-    if (n !== G.hover) {
-      G.hover = n;
-      cv.style.cursor = n ? "pointer" : "grab";
-      drawGraphFrame();
-    }
-  };
-  cv.onmouseup = (e) => {
-    const r = cv.getBoundingClientRect();
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
-    const moved = G.moved;
-    G.drag = null; G.pan = null; G.moved = false;
-    if (moved) { drawGraphFrame(); return; }
-    const hit = nodeAt(mx, my);
-    if (hit) {
-      if (G.armed && G.selected && hit.id !== G.selected.id) {
-        G.armed = false;
-        linkNodes(G.selected, hit);
-      } else {
-        selectNode(hit);
-      }
-    } else {
-      G.selected = null;
-      hideCard();
-      drawGraphFrame();
-    }
-  };
-  cv.onmouseleave = () => { G.hover = null; drawGraphFrame(); };
-  cv.ondblclick = async (e) => {
-    const r = cv.getBoundingClientRect();
-    const n = nodeAt(e.clientX - r.left, e.clientY - r.top);
-    if (n && n.path) {
-      try { const o = await api("/api/open?path=" + encodeURIComponent(n.path)); location.href = o.uri; }
-      catch (err) { toast("打开失败：" + err.message); }
-    }
-  };
-}
-
-function selectNode(n) {
-  G.selected = n;
-  G.tx = G.W / 2 - n.x * G.scale;
-  G.ty = G.H / 2 - n.y * G.scale;
-  showCard(n);
-  drawGraphFrame();
-}
-
-function hideCard() { const c = $("#gcard"); if (c) c.classList.remove("on"); }
-
-function showCard(n) {
-  const card = $("#gcard");
-  if (!card) return;
-  card.classList.add("on");
-  $("#gcName").textContent = n.label;
-  $("#gcType").textContent = n.group + (n.type && n.type !== n.group ? " · " + n.type : "");
-  const rels = G.links.filter((l) => l.a.id === n.id || l.b.id === n.id);
-  $("#gcMeta").textContent = `${rels.length} 条关系` + (n.summary ? " · " + n.summary.slice(0, 70) : "");
-
-  const acts = $("#gcActs");
-  acts.innerHTML = "";
-  const addBtn = (label, fn) => {
-    const b = document.createElement("button");
-    b.textContent = label;
-    b.onclick = fn;
-    acts.appendChild(b);
-  };
-  if (n.path) addBtn("打开", () => openPath(n.path));
-  if (n.group === "entity" || n.group === "concept") {
-    addBtn("重命名", () => renameNode(n));
-    addBtn("连接…", () => { G.armed = true; toast("再点一个节点完成连线"); });
-  }
-
-  const nb = $("#gcNb");
-  nb.innerHTML = "";
-  for (const l of rels.slice(0, 10)) {
-    const other = l.a.id === n.id ? l.b : l.a;
-    const row = document.createElement("div");
-    row.className = "nbrow";
-    row.innerHTML = `<span>${esc(other.label)}</span><button class="cut" data-e="${l.id}">断开</button>`;
-    row.querySelector(".cut").onclick = (ev) => { ev.stopPropagation(); cutEdge(l.id); };
-    nb.appendChild(row);
-  }
-}
-
-async function openPath(path) {
-  try { const o = await api("/api/open?path=" + encodeURIComponent(path)); location.href = o.uri; }
-  catch (e) { toast("打开失败：" + e.message); }
-}
-
-async function renameNode(n) {
-  const name = prompt("新的名字", n.label);
-  if (!name || name.trim() === n.label) return;
-  try {
-    await api(`/api/graph/nodes/${n.group}/${n.ref}`, {
-      method: "PATCH", body: JSON.stringify({ name: name.trim() }),
-    });
-    toast("已重命名");
-    await drawGraph();
-  } catch (e) { toast("失败：" + e.message); }
-}
-
-async function linkNodes(a, b) {
-  if (a.group !== "entity" && a.group !== "concept") { toast("只能连接实体/概念"); return; }
-  if (b.group !== "entity" && b.group !== "concept") { toast("只能连接实体/概念"); return; }
-  try {
-    await api("/api/graph/edges", {
-      method: "POST",
-      body: JSON.stringify({ src_type: a.group, src_id: a.ref, dst_type: b.group, dst_id: b.ref }),
-    });
-    toast("已连线");
-    await drawGraph();
-  } catch (e) { toast("失败：" + e.message); }
-}
-
-async function cutEdge(edgeId) {
-  try {
-    await api("/api/graph/edges/" + edgeId, { method: "DELETE" });
-    toast("已断开");
-    await drawGraph();
-  } catch (e) { toast("失败：" + e.message); }
-}
-
-function resizeGraph() {
-  if (!G) return;
-  const rect = G.cv.getBoundingClientRect();
-  if (!rect.width || !rect.height) return;
-  G.dpr = window.devicePixelRatio || 1;
-  G.cv.width = rect.width * G.dpr;
-  G.cv.height = rect.height * G.dpr;
-  G.W = rect.width;
-  G.H = rect.height;
-  fitGraph();
-}
-
-function bindGraphToolbar() {
-  const bind = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
-  bind('[data-g="in"]', () => { G.scale = Math.min(4, G.scale * 1.2); drawGraphFrame(); });
-  bind('[data-g="out"]', () => { G.scale = Math.max(0.25, G.scale / 1.2); drawGraphFrame(); });
-  bind('[data-g="fit"]', () => fitGraph());
-  bind('[data-g="undo"]', async () => {
-    try {
-      const r = await api("/api/graph/undo", { method: "POST" });
-      toast(r.undone === "rename" ? "已撤销重命名" : "已撤销连线操作");
-      await drawGraph();
-    } catch (e) { toast("撤销失败：" + e.message); }
-  });
-  bind('[data-g="full"]', () => {
-    const d = $("#drawer");
-    d.classList.toggle("full");
-    setTimeout(resizeGraph, 90);
-  });
-  const q = $("#gsearch");
-  if (q) q.oninput = () => { if (G) { G.q = q.value.trim(); drawGraphFrame(); } };
-  const f = $("#gfilter");
-  if (f) f.onchange = () => { if (G) { G.filter = f.value; drawGraphFrame(); } };
-}
-bindGraphToolbar();
-
-async function openPreview(c) {
-  const modal = $("#modal");
-  modal.classList.add("on");
-  $("#modalTitle").textContent = c.title || "笔记";
-  $("#modalMeta").textContent = c.path || "";
-  $("#modalBody").innerHTML = `<span class="spin"></span>加载…`;
-  try {
-    let text = "";
-    if (c.id) { const n = await api("/api/notes/" + c.id); text = n.body_md || n.summary || ""; }
-    $("#modalBody").innerHTML = text ? md(text) : `<span style="color:var(--muted)">这条引用来自原文片段，去 Obsidian 里看完整记录。</span>`;
-  } catch (e) { $("#modalBody").textContent = String(e.message); }
-  $("#modalOpen").onclick = async () => {
-    try { const r = await api("/api/open?path=" + encodeURIComponent(c.path || "")); location.href = r.uri; }
-    catch (e) { toast("打开失败：" + e.message); }
-  };
-  $("#modalAsk").onclick = () => {
-    modal.classList.remove("on");
-    input.value = "关于《" + (c.title || "") + "》，";
-    input.focus();
-  };
-}
-
-const COMMANDS = [
-  { k: "新对话", g: "↺", run: () => newThread() },
-  { k: "导入会议", g: "⏱", run: () => doMeetings() },
-  { k: "扫 inbox", g: "▤", run: () => doSync() },
-  { k: "回收 AI 会话", g: "◈", run: () => doHarvest() },
-  { k: "生成日报", g: "☾", run: () => doDigest() },
-  { k: "同步行动项", g: "✓", run: () => doActions() },
-  { k: "知识库体检", g: "✚", run: () => doLint() },
-  { k: "跨来源综述", g: "◎", run: () => { input.value = "/topic "; input.focus(); } },
-  { k: "打开图谱", g: "◇", run: () => openDrawer("graph") },
-  { k: "历史会话", g: "≡", run: () => openDrawer("conv") },
-  { k: "查看来源", g: "▦", run: () => openDrawer("sources") },
-  { k: "工具状态", g: "◉", run: () => openDrawer("tools") },
-];
-let paletteSel = 0, paletteItems = [];
-
-function openPalette(prefill = "") {
-  $("#palette").classList.add("open");
-  const inp = $("#paletteInput");
-  inp.value = prefill;
-  renderPalette(prefill);
-  setTimeout(() => inp.focus(), 10);
-}
-function closePalette() { $("#palette").classList.remove("open"); }
-
-function renderPalette(q) {
-  const s = (q || "").toLowerCase().trim();
-  paletteItems = COMMANDS.filter((c) => !s || c.k.toLowerCase().includes(s));
-  paletteSel = 0;
-  $("#paletteList").innerHTML = paletteItems.map((c, i) => `
-    <div class="cmd ${i === 0 ? "sel" : ""}" data-i="${i}"><span class="g">${c.g}</span>${esc(c.k)}</div>`).join("")
-    || `<div class="cmd">没有匹配的命令</div>`;
-  $$("#paletteList .cmd").forEach((el) => el.onclick = () => { const i = Number(el.dataset.i); if (paletteItems[i]) runPalette(i); });
-}
-function runPalette(i) {
-  const c = paletteItems[i];
-  if (!c) return;
-  closePalette();
-  c.run();
-}
-
-function isQuestion(t) {
-  if (/[?？]\s*$/.test(t)) return true;
-  if (t.length <= 70 && /(什么|为什么|怎么|如何|哪些|哪个|谁|多少|是不是|有没有|能否|吗)\s*[?？]?$/.test(t)) return true;
-  return t.length <= 40 && /^(什么|为什么|怎么|如何|哪些|哪个|谁|多少|是不是|有没有)/.test(t);
-}
-
-function route(text) {
-  const t = (text || "").trim();
-  if (!t) return;
-  if (t.startsWith("/")) {
-    const [cmd, ...rest] = t.split(/\s+/);
-    const arg = rest.join(" ");
-    const map = {
-      "/ask": () => doAsk(arg || "最近的知识库讲了什么"),
-      "/note": () => doCapture(arg),
-      "/topic": () => doSynthesize(arg),
-      "/meeting": () => doMeetings(),
-      "/sync": () => doSync(),
-      "/harvest": () => doHarvest(),
-      "/digest": () => doDigest(),
-      "/lint": () => doLint(),
-      "/graph": () => openDrawer("graph"),
-      "/help": () => sysLine("斜杠命令：/ask /note /topic /meeting /sync /harvest /digest /lint /graph"),
-    };
-    if (map[cmd]) { sayUser(t); return map[cmd](); }
-    openPalette(t.slice(1));
-    return;
-  }
-  sayUser(t);
-  if (/^https?:\/\//.test(t)) return doIngestUrl(t);
-  if (isQuestion(t)) return doAsk(t);
-  return doCapture(t);
-}
-
-async function doIngestUrl(url) {
-  const body = sayAI();
-  body.innerHTML = `<span class="spin"></span>抓取网页…`;
-  try {
-    const r = await api("/api/ingest", { method: "POST", body: JSON.stringify({ target: url }) });
-    body.innerHTML = resultCard(r);
-    loadStatus(); loadSources();
-  } catch (e) { body.innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
-}
-
-function hero() {
-  thread.innerHTML = `
-    <div class="hero">
-      <h1>今天记点什么？</h1>
-      <p>说一句话就会被判断成「记」或「问」；内容会提炼成实体与概念，写进 Obsidian。</p>
-      <div class="suggest">
-        <button data-a="meet">导入会议</button>
-        <button data-a="ask">问：最近一场会讲了什么</button>
-        <button data-a="graph">看图谱</button>
-        <button data-a="palette">全部命令</button>
-      </div>
-    </div>`;
-  $$(".suggest button").forEach((b) => b.onclick = () => {
-    const a = b.dataset.a;
-    if (a === "meet") doMeetings();
-    else if (a === "ask") { input.value = "最近一场会讲了什么？"; input.focus(); }
-    else if (a === "graph") openDrawer("graph");
-    else openPalette();
-  });
-}
-
-function newThread() {
-  convId = null;
-  threadHistory = [];
-  hero();
-  input.focus();
-}
-
-$("#composer").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  if (sendBtn.disabled) return;
-  const t = input.value;
-  if (!t.trim()) return;
-  input.value = "";
-  input.style.height = "auto";
-  if (thread.querySelector(".hero")) thread.innerHTML = "";
-  sendBtn.disabled = true;
-  try { await route(t); } finally { sendBtn.disabled = false; input.focus(); }
-});
-
-input.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#composer").requestSubmit(); }
-  if (e.key === "/" && input.value === "") { e.preventDefault(); openPalette(); }
-});
-input.addEventListener("input", () => {
-  input.style.height = "auto";
-  input.style.height = Math.min(input.scrollHeight, 190) + "px";
-});
-
-$("#drawerBtn").onclick = () => openDrawer("conv");
-$("#statusBtn").onclick = () => openDrawer("tools");
-$("#drawerClose").onclick = closeDrawer;
-$("#seg").addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-pane]");
-  if (b) switchPane(b.dataset.pane);
-});
-$("#mic").onclick = toggleMic;
-$("#modalClose").onclick = () => $("#modal").classList.remove("on");
-$("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") $("#modal").classList.remove("on"); });
-
-document.addEventListener("click", (e) => {
-  const cite = e.target.closest ? e.target.closest(".cite") : null;
-  if (cite) { const c = parseCite(cite); if (c) openPreview(c); }
-});
-
-$("#paletteInput").addEventListener("input", (e) => renderPalette(e.target.value));
-$("#paletteInput").addEventListener("keydown", (e) => {
-  if (e.key === "Escape") return closePalette();
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    e.preventDefault();
-    if (!paletteItems.length) return;
-    paletteSel = (paletteSel + (e.key === "ArrowDown" ? 1 : -1) + paletteItems.length) % paletteItems.length;
-    $$("#paletteList .cmd").forEach((el, i) => el.classList.toggle("sel", i === paletteSel));
-    return;
-  }
-  if (e.key === "Enter") { e.preventDefault(); runPalette(paletteSel); }
-});
-$("#palette").addEventListener("click", (e) => { if (e.target.id === "palette") closePalette(); });
-
-document.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(); }
-  if (e.key === "Escape") { closePalette(); closeDrawer(); $("#modal").classList.remove("on"); }
-});
-
-(async function boot() {
-  hero();
-  await loadStatus();
-  loadConversations();
-  setInterval(loadStatus, 30000);
-  const q = new URLSearchParams(location.search).get("q");
-  if (q) setTimeout(() => { input.value = q; $("#composer").requestSubmit(); }, 300);
-})();
-</script>
+<script src="/static/app.js?v=0.9.9-1" defer></script>
 </body>
 </html>

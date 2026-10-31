@@ -30,6 +30,8 @@ def redistill_cooccur(database: Database | None = None, top_n: int = 8) -> dict[
     database = database or db()
     before = graph_metrics(database)
     with database.tx() as c:
+        c.execute("DELETE FROM edge_sources WHERE edge_id IN"
+                  " (SELECT id FROM edges WHERE rel='co_occurs')")
         c.execute("DELETE FROM edges WHERE rel='co_occurs'")
 
     sources = []
@@ -47,4 +49,11 @@ def redistill_cooccur(database: Database | None = None, top_n: int = 8) -> dict[
         sources.append(int(r["id"]))
 
     after = graph_metrics(database)
-    return {"before": before, "after": after, "sources": len(sources), "pairs": added}
+    # 旧版 add_edge 会把 related_to 的 0.7 先验按"换来源"累加；这里归一（人工连线保留 1.0）
+    with database.tx() as c:
+        normalized = c.execute(
+            "UPDATE edges SET weight=0.7 WHERE rel='related_to'"
+            " AND COALESCE(evidence,'')!='人工连线' AND weight!=0.7"
+        ).rowcount
+    return {"before": before, "after": after, "sources": len(sources), "pairs": added,
+            "related_to_normalized": int(normalized)}

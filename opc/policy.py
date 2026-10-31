@@ -79,12 +79,22 @@ def _mask_with(text: str, mapping: dict[str, str], counters: dict[str, int]) -> 
     return out
 
 
-def mask_many(texts: list[str]) -> tuple[list[str], dict[str, str]]:
-    """一次调用内共享计数器：同一原文在任何字段里都是同一个令牌。"""
+def new_state() -> dict[str, Any]:
+    """一次请求内的脱敏状态：跨多次 mask_many 复用同一映射（令牌一致）。"""
+    return {"mapping": {}, "counters": {"ORG": 0, "PERSON": 0}}
+
+
+def mask_many(texts: list[str], state: dict[str, Any] | None = None
+              ) -> tuple[list[str], dict[str, str]]:
+    """一次调用内共享计数器：同一原文在任何字段里都是同一个令牌。
+
+    传入 `state` 可跨多次调用延续映射（例如先脱敏问题、再脱敏检索上下文）。
+    """
     if not enabled():
-        return list(texts), {}
-    mapping: dict[str, str] = {}
-    counters = {"ORG": 0, "PERSON": 0}
+        return list(texts), (state or {}).get("mapping", {})
+    state = state if state is not None else new_state()
+    mapping: dict[str, str] = state["mapping"]
+    counters: dict[str, int] = state["counters"]
     return [_mask_with(t or "", mapping, counters) for t in texts], mapping
 
 
